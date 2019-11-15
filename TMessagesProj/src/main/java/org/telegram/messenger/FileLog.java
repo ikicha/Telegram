@@ -1,23 +1,20 @@
 /*
- * This is the source code of Telegram for Android v. 1.3.2.
+ * This is the source code of Telegram for Android v. 5.x.x.
  * It is licensed under GNU GPL v. 2 or later.
  * You should have received a copy of the license in this archive (see LICENSE).
  *
- * Copyright Nikolai Kudashov, 2013.
+ * Copyright Nikolai Kudashov, 2013-2018.
  */
 
 package org.telegram.messenger;
 
-import android.net.Uri;
 import android.util.Log;
 
-import org.telegram.android.FastDateFormat;
-import org.telegram.ui.ApplicationLoader;
+import org.telegram.messenger.time.FastDateFormat;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStreamWriter;
-import java.util.ArrayList;
 import java.util.Locale;
 
 public class FileLog {
@@ -25,6 +22,10 @@ public class FileLog {
     private FastDateFormat dateFormat = null;
     private DispatchQueue logQueue = null;
     private File currentFile = null;
+    private File networkFile = null;
+    private boolean initied;
+
+    private final static String tag = "tmessages";
 
     private static volatile FileLog Instance = null;
     public static FileLog getInstance() {
@@ -41,7 +42,14 @@ public class FileLog {
     }
 
     public FileLog() {
-        if (!BuildVars.DEBUG_VERSION) {
+        if (!BuildVars.LOGS_ENABLED) {
+            return;
+        }
+        init();
+    }
+
+    public void init() {
+        if (initied) {
             return;
         }
         dateFormat = FastDateFormat.getInstance("dd_MM_yyyy_HH_mm_ss", Locale.US);
@@ -51,14 +59,8 @@ public class FileLog {
                 return;
             }
             File dir = new File(sdCard.getAbsolutePath() + "/logs");
-            if (dir == null) {
-                return;
-            }
             dir.mkdirs();
             currentFile = new File(dir, dateFormat.format(System.currentTimeMillis()) + ".txt");
-            if (currentFile == null) {
-                return;
-            }
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -72,68 +74,86 @@ public class FileLog {
         } catch (Exception e) {
             e.printStackTrace();
         }
+        initied = true;
     }
 
-    public static void e(final String tag, final String message, final Throwable exception) {
-        if (!BuildVars.DEBUG_VERSION) {
+    public static void ensureInitied() {
+        getInstance().init();
+    }
+
+    public static String getNetworkLogPath() {
+        if (!BuildVars.LOGS_ENABLED) {
+            return "";
+        }
+        try {
+            File sdCard = ApplicationLoader.applicationContext.getExternalFilesDir(null);
+            if (sdCard == null) {
+                return "";
+            }
+            File dir = new File(sdCard.getAbsolutePath() + "/logs");
+            dir.mkdirs();
+            getInstance().networkFile = new File(dir, getInstance().dateFormat.format(System.currentTimeMillis()) + "_net.txt");
+            return getInstance().networkFile.getAbsolutePath();
+        } catch (Throwable e) {
+            e.printStackTrace();
+        }
+        return "";
+    }
+
+    public static void e(final String message, final Throwable exception) {
+        if (!BuildVars.LOGS_ENABLED) {
             return;
         }
+        ensureInitied();
         Log.e(tag, message, exception);
         if (getInstance().streamWriter != null) {
-            getInstance().logQueue.postRunnable(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        getInstance().streamWriter.write(getInstance().dateFormat.format(System.currentTimeMillis()) + " E/" + tag + "﹕ " + message + "\n");
-                        getInstance().streamWriter.write(exception.toString());
-                        getInstance().streamWriter.flush();
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
+            getInstance().logQueue.postRunnable(() -> {
+                try {
+                    getInstance().streamWriter.write(getInstance().dateFormat.format(System.currentTimeMillis()) + " E/tmessages: " + message + "\n");
+                    getInstance().streamWriter.write(exception.toString());
+                    getInstance().streamWriter.flush();
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
             });
         }
     }
 
-    public static void e(final String tag, final String message) {
-        if (!BuildVars.DEBUG_VERSION) {
+    public static void e(final String message) {
+        if (!BuildVars.LOGS_ENABLED) {
             return;
         }
+        ensureInitied();
         Log.e(tag, message);
         if (getInstance().streamWriter != null) {
-            getInstance().logQueue.postRunnable(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        getInstance().streamWriter.write(getInstance().dateFormat.format(System.currentTimeMillis()) + " E/" + tag + "﹕ " + message + "\n");
-                        getInstance().streamWriter.flush();
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
+            getInstance().logQueue.postRunnable(() -> {
+                try {
+                    getInstance().streamWriter.write(getInstance().dateFormat.format(System.currentTimeMillis()) + " E/tmessages: " + message + "\n");
+                    getInstance().streamWriter.flush();
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
             });
         }
     }
 
-    public static void e(final String tag, final Throwable e) {
-        if (!BuildVars.DEBUG_VERSION) {
+    public static void e(final Throwable e) {
+        if (!BuildVars.LOGS_ENABLED) {
             return;
         }
+        ensureInitied();
         e.printStackTrace();
         if (getInstance().streamWriter != null) {
-            getInstance().logQueue.postRunnable(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        getInstance().streamWriter.write(getInstance().dateFormat.format(System.currentTimeMillis()) + " E/" + tag + "﹕ " + e + "\n");
-                        StackTraceElement[] stack = e.getStackTrace();
-                        for (StackTraceElement el : stack) {
-                            getInstance().streamWriter.write(getInstance().dateFormat.format(System.currentTimeMillis()) + " E/" + tag + "﹕ " + el + "\n");
-                        }
-                        getInstance().streamWriter.flush();
-                    } catch (Exception e) {
-                        e.printStackTrace();
+            getInstance().logQueue.postRunnable(() -> {
+                try {
+                    getInstance().streamWriter.write(getInstance().dateFormat.format(System.currentTimeMillis()) + " E/tmessages: " + e + "\n");
+                    StackTraceElement[] stack = e.getStackTrace();
+                    for (int a = 0; a < stack.length; a++) {
+                        getInstance().streamWriter.write(getInstance().dateFormat.format(System.currentTimeMillis()) + " E/tmessages: " + stack[a] + "\n");
                     }
+                    getInstance().streamWriter.flush();
+                } catch (Exception e1) {
+                    e1.printStackTrace();
                 }
             });
         } else {
@@ -141,36 +161,61 @@ public class FileLog {
         }
     }
 
-    public static void d(final String tag, final String message) {
-        if (!BuildVars.DEBUG_VERSION) {
+    public static void d(final String message) {
+        if (!BuildVars.LOGS_ENABLED) {
             return;
         }
+        ensureInitied();
         Log.d(tag, message);
         if (getInstance().streamWriter != null) {
-            getInstance().logQueue.postRunnable(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        getInstance().streamWriter.write(getInstance().dateFormat.format(System.currentTimeMillis()) + " D/" + tag + "﹕ " + message + "\n");
-                        getInstance().streamWriter.flush();
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
+            getInstance().logQueue.postRunnable(() -> {
+                try {
+                    getInstance().streamWriter.write(getInstance().dateFormat.format(System.currentTimeMillis()) + " D/tmessages: " + message + "\n");
+                    getInstance().streamWriter.flush();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+        }
+    }
+
+    public static void w(final String message) {
+        if (!BuildVars.LOGS_ENABLED) {
+            return;
+        }
+        ensureInitied();
+        Log.w(tag, message);
+        if (getInstance().streamWriter != null) {
+            getInstance().logQueue.postRunnable(() -> {
+                try {
+                    getInstance().streamWriter.write(getInstance().dateFormat.format(System.currentTimeMillis()) + " W/tmessages: " + message + "\n");
+                    getInstance().streamWriter.flush();
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
             });
         }
     }
 
     public static void cleanupLogs() {
-        ArrayList<Uri> uris = new ArrayList<Uri>();
+        ensureInitied();
         File sdCard = ApplicationLoader.applicationContext.getExternalFilesDir(null);
+        if (sdCard == null) {
+            return;
+        }
         File dir = new File (sdCard.getAbsolutePath() + "/logs");
         File[] files = dir.listFiles();
-        for (File file : files) {
-            if (getInstance().currentFile != null && file.getAbsolutePath().equals(getInstance().currentFile.getAbsolutePath())) {
-                continue;
+        if (files != null) {
+            for (int a = 0; a < files.length; a++) {
+                File file = files[a];
+                if (getInstance().currentFile != null && file.getAbsolutePath().equals(getInstance().currentFile.getAbsolutePath())) {
+                    continue;
+                }
+                if (getInstance().networkFile != null && file.getAbsolutePath().equals(getInstance().networkFile.getAbsolutePath())) {
+                    continue;
+                }
+                file.delete();
             }
-            file.delete();
         }
     }
 }

@@ -1,211 +1,238 @@
 /*
- * This is the source code of Telegram for Android v. 1.3.2.
+ * This is the source code of Telegram for Android v. 5.x.x.
  * It is licensed under GNU GPL v. 2 or later.
  * You should have received a copy of the license in this archive (see LICENSE).
  *
- * Copyright Nikolai Kudashov, 2013.
+ * Copyright Nikolai Kudashov, 2013-2018.
  */
 
 package org.telegram.ui;
 
-import android.app.Activity;
-import android.app.AlertDialog;
-import android.app.ProgressDialog;
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.AnimatorSet;
+import android.animation.ObjectAnimator;
+import android.animation.StateListAnimator;
+import android.annotation.SuppressLint;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
-import android.graphics.Typeface;
+import android.content.res.Configuration;
+import android.graphics.Canvas;
+import android.graphics.Outline;
+import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffColorFilter;
+import android.graphics.drawable.Drawable;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
-import android.text.Html;
-import android.text.Spannable;
-import android.text.method.LinkMovementMethod;
-import android.util.Base64;
-import android.view.LayoutInflater;
-import android.view.MotionEvent;
+import androidx.core.content.FileProvider;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+
+import android.text.SpannableStringBuilder;
+import android.text.Spanned;
+import android.text.TextUtils;
+import android.text.style.ForegroundColorSpan;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.AdapterView;
-import android.widget.ImageButton;
+import android.view.ViewOutlineProvider;
+import android.view.ViewTreeObserver;
+import android.view.animation.AccelerateInterpolator;
+import android.view.animation.DecelerateInterpolator;
+import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
-import android.widget.ListView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import org.telegram.android.AndroidUtilities;
-import org.telegram.android.ContactsController;
+import org.telegram.messenger.AndroidUtilities;
 import org.telegram.PhoneFormat.PhoneFormat;
-import org.telegram.android.MediaController;
+import org.telegram.messenger.BuildConfig;
+import org.telegram.messenger.ContactsController;
+import org.telegram.messenger.MediaDataController;
+import org.telegram.messenger.ImageLoader;
+import org.telegram.messenger.ImageLocation;
+import org.telegram.messenger.NotificationsController;
+import org.telegram.messenger.SharedConfig;
+import org.telegram.messenger.UserObject;
+import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BuildVars;
-import org.telegram.android.LocaleController;
+import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.FileLoader;
-import org.telegram.messenger.SerializedData;
-import org.telegram.messenger.TLClassStore;
-import org.telegram.messenger.TLObject;
-import org.telegram.messenger.TLRPC;
-import org.telegram.messenger.ConnectionsManager;
+import org.telegram.messenger.Utilities;
+import org.telegram.messenger.browser.Browser;
+import org.telegram.tgnet.ConnectionsManager;
+import org.telegram.tgnet.SerializedData;
+import org.telegram.tgnet.TLRPC;
 import org.telegram.messenger.FileLog;
-import org.telegram.android.MessagesController;
-import org.telegram.android.MessagesStorage;
-import org.telegram.android.NotificationCenter;
+import org.telegram.messenger.MessagesController;
+import org.telegram.messenger.MessagesStorage;
+import org.telegram.messenger.NotificationCenter;
 import org.telegram.messenger.R;
-import org.telegram.messenger.RPCRequest;
 import org.telegram.messenger.UserConfig;
-import org.telegram.android.MessageObject;
-import org.telegram.ui.Adapters.BaseFragmentAdapter;
-import org.telegram.ui.Views.ActionBar.ActionBarLayer;
-import org.telegram.ui.Views.AvatarUpdater;
-import org.telegram.ui.Views.BackupImageView;
-import org.telegram.ui.Views.ActionBar.BaseFragment;
+import org.telegram.messenger.MessageObject;
+import org.telegram.ui.ActionBar.AlertDialog;
+import org.telegram.ui.ActionBar.BottomSheet;
+import org.telegram.ui.ActionBar.ThemeDescription;
+import org.telegram.ui.Cells.EmptyCell;
+import org.telegram.ui.Cells.GraySectionCell;
+import org.telegram.ui.Cells.HeaderCell;
+import org.telegram.ui.Cells.SettingsSearchCell;
+import org.telegram.ui.Cells.ShadowSectionCell;
+import org.telegram.ui.Cells.TextCell;
+import org.telegram.ui.Cells.TextDetailCell;
+import org.telegram.ui.Cells.TextInfoPrivacyCell;
+import org.telegram.ui.ActionBar.ActionBar;
+import org.telegram.ui.ActionBar.ActionBarMenu;
+import org.telegram.ui.ActionBar.ActionBarMenuItem;
+import org.telegram.ui.Components.AlertsCreator;
+import org.telegram.ui.Components.AvatarDrawable;
+import org.telegram.ui.Components.EmptyTextProgressView;
+import org.telegram.ui.Components.ImageUpdater;
+import org.telegram.ui.Components.BackupImageView;
+import org.telegram.ui.ActionBar.BaseFragment;
+import org.telegram.ui.Components.CombinedDrawable;
+import org.telegram.ui.Components.LayoutHelper;
+import org.telegram.ui.ActionBar.Theme;
+import org.telegram.ui.Components.RadialProgressView;
+import org.telegram.ui.Components.RecyclerListView;
+import org.telegram.ui.Components.voip.VoIPHelper;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Set;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
-public class SettingsActivity extends BaseFragment implements NotificationCenter.NotificationCenterDelegate, PhotoViewer.PhotoViewerProvider {
-    private ListView listView;
+public class SettingsActivity extends BaseFragment implements NotificationCenter.NotificationCenterDelegate, ImageUpdater.ImageUpdaterDelegate {
+
+    private RecyclerListView listView;
     private ListAdapter listAdapter;
-    private AvatarUpdater avatarUpdater = new AvatarUpdater();
+    private SearchAdapter searchAdapter;
+    private LinearLayoutManager layoutManager;
+    private FrameLayout avatarContainer;
+    private BackupImageView avatarImage;
+    private View avatarOverlay;
+    private AnimatorSet avatarAnimation;
+    private RadialProgressView avatarProgressView;
+    private TextView nameTextView;
+    private TextView onlineTextView;
+    private ImageView writeButton;
+    private AnimatorSet writeButtonAnimation;
+    private ImageUpdater imageUpdater;
+    private View extraHeightView;
+    private View shadowView;
+    private AvatarDrawable avatarDrawable;
+    private ActionBarMenuItem otherItem;
+    private EmptyTextProgressView emptyView;
 
-    private int profileRow;
+    private TLRPC.FileLocation avatar;
+    private TLRPC.FileLocation avatarBig;
+
+    private TLRPC.UserFull userInfo;
+
+    private int extraHeight;
+
+    private int overscrollRow;
     private int numberSectionRow;
     private int numberRow;
+    private int usernameRow;
+    private int bioRow;
     private int settingsSectionRow;
-    private int textSizeRow;
-    private int enableAnimationsRow;
+    private int settingsSectionRow2;
     private int notificationRow;
-    private int blockedRow;
-    private int backgroundRow;
-    private int supportSectionRow;
-    private int askQuestionRow;
-    private int logoutRow;
-    private int sendLogsRow;
-    private int clearLogsRow;
-    private int switchBackendButtonRow;
-    private int messagesSectionRow;
-    private int sendByEnterRow;
-    private int terminateSessionsRow;
-    private int mediaDownloadSection;
-    private int mobileDownloadRow;
-    private int wifiDownloadRow;
-    private int roamingDownloadRow;
-    private int saveToGalleryRow;
-    private int telegramFaqRow;
     private int languageRow;
+    private int privacyRow;
+    private int dataRow;
+    private int chatRow;
+    private int helpRow;
     private int versionRow;
-    private int contactsSectionRow;
-    private int contactsReimportRow;
-    private int contactsSortRow;
     private int rowCount;
 
-    private static class LinkMovementMethodMy extends LinkMovementMethod {
+    private final static int edit_name = 1;
+    private final static int logout = 2;
+    private final static int search_button = 3;
+
+    private PhotoViewer.PhotoViewerProvider provider = new PhotoViewer.EmptyPhotoViewerProvider() {
+
         @Override
-        public boolean onTouchEvent(TextView widget, Spannable buffer, MotionEvent event) {
-            try {
-                return super.onTouchEvent(widget, buffer, event);
-            } catch (Exception e) {
-                FileLog.e("tmessages", e);
+        public PhotoViewer.PlaceProviderObject getPlaceForPhoto(MessageObject messageObject, TLRPC.FileLocation fileLocation, int index, boolean needPreview) {
+            if (fileLocation == null) {
+                return null;
             }
-            return false;
+            TLRPC.User user = MessagesController.getInstance(currentAccount).getUser(UserConfig.getInstance(currentAccount).getClientUserId());
+            if (user != null && user.photo != null && user.photo.photo_big != null) {
+                TLRPC.FileLocation photoBig = user.photo.photo_big;
+                if (photoBig.local_id == fileLocation.local_id && photoBig.volume_id == fileLocation.volume_id && photoBig.dc_id == fileLocation.dc_id) {
+                    int[] coords = new int[2];
+                    avatarImage.getLocationInWindow(coords);
+                    PhotoViewer.PlaceProviderObject object = new PhotoViewer.PlaceProviderObject();
+                    object.viewX = coords[0];
+                    object.viewY = coords[1] - (Build.VERSION.SDK_INT >= 21 ? 0 : AndroidUtilities.statusBarHeight);
+                    object.parentView = avatarImage;
+                    object.imageReceiver = avatarImage.getImageReceiver();
+                    object.dialogId = UserConfig.getInstance(currentAccount).getClientUserId();
+                    object.thumb = object.imageReceiver.getBitmapSafe();
+                    object.size = -1;
+                    object.radius = avatarImage.getImageReceiver().getRoundRadius();
+                    object.scale = avatarContainer.getScaleX();
+                    return object;
+                }
+            }
+            return null;
         }
-    }
+
+        @Override
+        public void willHidePhotoViewer() {
+            avatarImage.getImageReceiver().setVisible(true, true);
+        }
+    };
 
     @Override
     public boolean onFragmentCreate() {
         super.onFragmentCreate();
-        avatarUpdater.parentFragment = this;
-        avatarUpdater.delegate = new AvatarUpdater.AvatarUpdaterDelegate() {
-            @Override
-            public void didUploadedPhoto(TLRPC.InputFile file, TLRPC.PhotoSize small, TLRPC.PhotoSize big) {
-                TLRPC.TL_photos_uploadProfilePhoto req = new TLRPC.TL_photos_uploadProfilePhoto();
-                req.caption = "";
-                req.crop = new TLRPC.TL_inputPhotoCropAuto();
-                req.file = file;
-                req.geo_point = new TLRPC.TL_inputGeoPointEmpty();
-                ConnectionsManager.getInstance().performRpc(req, new RPCRequest.RPCRequestDelegate() {
-                    @Override
-                    public void run(TLObject response, TLRPC.TL_error error) {
-                        if (error == null) {
-                            TLRPC.User user = MessagesController.getInstance().getUser(UserConfig.getClientUserId());
-                            if (user == null) {
-                                user = UserConfig.getCurrentUser();
-                                if (user == null) {
-                                    return;
-                                }
-                                MessagesController.getInstance().putUser(user, false);
-                            } else {
-                                UserConfig.setCurrentUser(user);
-                            }
-                            if (user == null) {
-                                return;
-                            }
-                            TLRPC.TL_photos_photo photo = (TLRPC.TL_photos_photo)response;
-                            ArrayList<TLRPC.PhotoSize> sizes = photo.photo.sizes;
-                            TLRPC.PhotoSize smallSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 100);
-                            TLRPC.PhotoSize bigSize = FileLoader.getClosestPhotoSizeWithSize(sizes, 1000);
-                            user.photo = new TLRPC.TL_userProfilePhoto();
-                            user.photo.photo_id = photo.photo.id;
-                            if (smallSize != null) {
-                                user.photo.photo_small = smallSize.location;
-                            }
-                            if (bigSize != null) {
-                                user.photo.photo_big = bigSize.location;
-                            } else if (smallSize != null) {
-                                user.photo.photo_small = smallSize.location;
-                            }
-                            MessagesStorage.getInstance().clearUserPhotos(user.id);
-                            ArrayList<TLRPC.User> users = new ArrayList<TLRPC.User>();
-                            users.add(user);
-                            MessagesStorage.getInstance().putUsersAndChats(users, null, false, true);
-                            AndroidUtilities.RunOnUIThread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    NotificationCenter.getInstance().postNotificationName(NotificationCenter.updateInterfaces, MessagesController.UPDATE_MASK_ALL);
-                                    UserConfig.saveConfig(true);
-                                }
-                            });
-                        }
-                    }
-                });
-            }
-        };
-        NotificationCenter.getInstance().addObserver(this, NotificationCenter.updateInterfaces);
 
+        imageUpdater = new ImageUpdater();
+        imageUpdater.parentFragment = this;
+        imageUpdater.delegate = this;
+        NotificationCenter.getInstance(currentAccount).addObserver(this, NotificationCenter.updateInterfaces);
+        NotificationCenter.getInstance(currentAccount).addObserver(this, NotificationCenter.userInfoDidLoad);
+        NotificationCenter.getGlobalInstance().addObserver(this, NotificationCenter.emojiDidLoad);
 
         rowCount = 0;
-        profileRow = rowCount++;
+        overscrollRow = rowCount++;
         numberSectionRow = rowCount++;
         numberRow = rowCount++;
+        usernameRow = rowCount++;
+        bioRow = rowCount++;
         settingsSectionRow = rowCount++;
-        enableAnimationsRow = rowCount++;
-        languageRow = rowCount++;
+        settingsSectionRow2 = rowCount++;
         notificationRow = rowCount++;
-        blockedRow = rowCount++;
-        backgroundRow = rowCount++;
-        terminateSessionsRow = rowCount++;
-        mediaDownloadSection = rowCount++;
-        mobileDownloadRow = rowCount++;
-        wifiDownloadRow = rowCount++;
-        roamingDownloadRow = rowCount++;
-        saveToGalleryRow = rowCount++;
-        messagesSectionRow = rowCount++;
-        textSizeRow = rowCount++;
-        sendByEnterRow = rowCount++;
-        //contactsSectionRow = rowCount++;
-        //contactsSortRow = rowCount++;
-        //contactsReimportRow = rowCount++;
-        supportSectionRow = rowCount++;
-        if (BuildVars.DEBUG_VERSION) {
-            sendLogsRow = rowCount++;
-            clearLogsRow = rowCount++;
-            switchBackendButtonRow = rowCount++;
-        }
-        telegramFaqRow = rowCount++;
-        askQuestionRow = rowCount++;
-        logoutRow = rowCount++;
+        privacyRow = rowCount++;
+        dataRow = rowCount++;
+        chatRow = rowCount++;
+        languageRow = rowCount++;
+        helpRow = rowCount++;
         versionRow = rowCount++;
+
+        MediaDataController.getInstance(currentAccount).checkFeaturedStickers();
+        userInfo = MessagesController.getInstance(currentAccount).getUserFull(UserConfig.getInstance(currentAccount).getClientUserId());
+        MessagesController.getInstance(currentAccount).loadUserInfo(UserConfig.getInstance(currentAccount).getCurrentUser(), true, classGuid);
 
         return true;
     }
@@ -213,489 +240,595 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
     @Override
     public void onFragmentDestroy() {
         super.onFragmentDestroy();
-        NotificationCenter.getInstance().removeObserver(this, NotificationCenter.updateInterfaces);
-        avatarUpdater.clear();
+        if (avatarImage != null) {
+            avatarImage.setImageDrawable(null);
+        }
+        NotificationCenter.getInstance(currentAccount).removeObserver(this, NotificationCenter.updateInterfaces);
+        NotificationCenter.getInstance(currentAccount).removeObserver(this, NotificationCenter.userInfoDidLoad);
+        NotificationCenter.getGlobalInstance().removeObserver(this, NotificationCenter.emojiDidLoad);
+        imageUpdater.clear();
     }
 
     @Override
-    public View createView(LayoutInflater inflater, ViewGroup container) {
-        if (fragmentView == null) {
-            actionBarLayer.setDisplayHomeAsUpEnabled(true, R.drawable.ic_ab_back);
-            actionBarLayer.setBackOverlay(R.layout.updating_state_layout);
-            actionBarLayer.setTitle(LocaleController.getString("Settings", R.string.Settings));
-            actionBarLayer.setActionBarMenuOnItemClick(new ActionBarLayer.ActionBarMenuOnItemClick() {
-                @Override
-                public void onItemClick(int id) {
-                    if (id == -1) {
-                        finishFragment();
-                    }
+    public View createView(Context context) {
+        actionBar.setBackgroundColor(Theme.getColor(Theme.key_avatar_backgroundActionBarBlue));
+        actionBar.setItemsBackgroundColor(Theme.getColor(Theme.key_avatar_actionBarSelectorBlue), false);
+        actionBar.setItemsColor(Theme.getColor(Theme.key_avatar_actionBarIconBlue), false);
+        actionBar.setBackButtonImage(R.drawable.ic_ab_back);
+        actionBar.setAddToContainer(false);
+        extraHeight = 88;
+        if (AndroidUtilities.isTablet()) {
+            actionBar.setOccupyStatusBar(false);
+        }
+        actionBar.setActionBarMenuOnItemClick(new ActionBar.ActionBarMenuOnItemClick() {
+            @Override
+            public void onItemClick(int id) {
+                if (id == -1) {
+                    finishFragment();
+                } else if (id == edit_name) {
+                    presentFragment(new ChangeNameActivity());
+                } else if (id == logout) {
+                    presentFragment(new LogoutActivity());
                 }
-            });
-
-            fragmentView = inflater.inflate(R.layout.settings_layout, container, false);
-            listAdapter = new ListAdapter(getParentActivity());
-            listView = (ListView)fragmentView.findViewById(R.id.listView);
-            listView.setAdapter(listAdapter);
-            listView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
-                @Override
-                public void onItemClick(AdapterView<?> adapterView, View view, final int i, long l) {
-                    if (i == textSizeRow) {
-                        if (getParentActivity() == null) {
-                            return;
-                        }
-                        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
-                        builder.setTitle(LocaleController.getString("TextSize", R.string.TextSize));
-                        builder.setItems(new CharSequence[] {
-                                String.format("%d", 12),
-                                String.format("%d", 13),
-                                String.format("%d", 14),
-                                String.format("%d", 15),
-                                String.format("%d", 16),
-                                String.format("%d", 17),
-                                String.format("%d", 18),
-                                String.format("%d", 19),
-                                String.format("%d", 20),
-                                String.format("%d", 21),
-                                String.format("%d", 22),
-                                String.format("%d", 23),
-                                String.format("%d", 24),
-                                String.format("%d", 25),
-                                String.format("%d", 26),
-                                String.format("%d", 27),
-                                String.format("%d", 28),
-                                String.format("%d", 29),
-                                String.format("%d", 30)}, new DialogInterface.OnClickListener() {
-                            @Override
-                            public void onClick(DialogInterface dialog, int which) {
-                                SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
-                                SharedPreferences.Editor editor = preferences.edit();
-                                editor.putInt("fons_size", 12 + which);
-                                MessagesController.getInstance().fontSize = 12 + which;
-                                editor.commit();
-                                if (listView != null) {
-                                    listView.invalidateViews();
-                                }
-                            }
-                        });
-                        builder.setNegativeButton(LocaleController.getString("Cancel", R.string.Cancel), null);
-                        showAlertDialog(builder);
-                    } else if (i == enableAnimationsRow) {
-                        SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
-                        boolean animations = preferences.getBoolean("view_animations", true);
-                        SharedPreferences.Editor editor = preferences.edit();
-                        editor.putBoolean("view_animations", !animations);
-                        editor.commit();
-                        if (listView != null) {
-                            listView.invalidateViews();
-                        }
-                    } else if (i == notificationRow) {
-                        presentFragment(new SettingsNotificationsActivity());
-                    } else if (i == blockedRow) {
-                        presentFragment(new SettingsBlockedUsersActivity());
-                    } else if (i == backgroundRow) {
-                        presentFragment(new SettingsWallpapersActivity());
-                    } else if (i == askQuestionRow) {
-                        if (getParentActivity() == null) {
-                            return;
-                        }
-                        final TextView message = new TextView(getParentActivity());
-                        message.setText(Html.fromHtml(LocaleController.getString("AskAQuestionInfo", R.string.AskAQuestionInfo)));
-                        message.setTextSize(18);
-                        message.setPadding(AndroidUtilities.dp(8), AndroidUtilities.dp(5), AndroidUtilities.dp(8), AndroidUtilities.dp(6));
-                        message.setMovementMethod(new LinkMovementMethodMy());
-
-                        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
-                        builder.setView(message);
-                        builder.setPositiveButton(LocaleController.getString("AskButton", R.string.AskButton), new DialogInterface.OnClickListener() {
-                            @Override
-                            public void onClick(DialogInterface dialogInterface, int i) {
-                                performAskAQuestion();
-                            }
-                        });
-                        builder.setNegativeButton(LocaleController.getString("Cancel", R.string.Cancel), null);
-                        showAlertDialog(builder);
-                    } else if (i == sendLogsRow) {
-                        sendLogs();
-                    } else if (i == clearLogsRow) {
-                        FileLog.cleanupLogs();
-                    } else if (i == sendByEnterRow) {
-                        SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
-                        boolean send = preferences.getBoolean("send_by_enter", false);
-                        SharedPreferences.Editor editor = preferences.edit();
-                        editor.putBoolean("send_by_enter", !send);
-                        editor.commit();
-                        if (listView != null) {
-                            listView.invalidateViews();
-                        }
-                    } else if (i == saveToGalleryRow) {
-                        MediaController.getInstance().toggleSaveToGallery();
-                        if (listView != null) {
-                            listView.invalidateViews();
-                        }
-                    } else if (i == terminateSessionsRow) {
-                        if (getParentActivity() == null) {
-                            return;
-                        }
-                        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
-                        builder.setMessage(LocaleController.getString("AreYouSureSessions", R.string.AreYouSureSessions));
-                        builder.setTitle(LocaleController.getString("AppName", R.string.AppName));
-                        builder.setPositiveButton(LocaleController.getString("OK", R.string.OK), new DialogInterface.OnClickListener() {
-                            @Override
-                            public void onClick(DialogInterface dialogInterface, int i) {
-                                TLRPC.TL_auth_resetAuthorizations req = new TLRPC.TL_auth_resetAuthorizations();
-                                ConnectionsManager.getInstance().performRpc(req, new RPCRequest.RPCRequestDelegate() {
-                                    @Override
-                                    public void run(final TLObject response, final TLRPC.TL_error error) {
-                                        AndroidUtilities.RunOnUIThread(new Runnable() {
-                                            @Override
-                                            public void run() {
-                                                if (getParentActivity() == null) {
-                                                    return;
-                                                }
-                                                if (error == null && response instanceof TLRPC.TL_boolTrue) {
-                                                    Toast toast = Toast.makeText(getParentActivity(), LocaleController.getString("TerminateAllSessions", R.string.TerminateAllSessions), Toast.LENGTH_SHORT);
-                                                    toast.show();
-                                                } else {
-                                                    Toast toast = Toast.makeText(getParentActivity(), LocaleController.getString("UnknownError", R.string.UnknownError), Toast.LENGTH_SHORT);
-                                                    toast.show();
-                                                }
-                                            }
-                                        });
-                                        UserConfig.registeredForPush = false;
-                                        UserConfig.registeredForInternalPush = false;
-                                        UserConfig.saveConfig(false);
-                                        MessagesController.getInstance().registerForPush(UserConfig.pushString);
-                                        ConnectionsManager.getInstance().initPushConnection();
-                                    }
-                                });
-                            }
-                        });
-                        builder.setNegativeButton(LocaleController.getString("Cancel", R.string.Cancel), null);
-                        showAlertDialog(builder);
-                    } else if (i == languageRow) {
-                        presentFragment(new LanguageSelectActivity());
-                    } else if (i == switchBackendButtonRow) {
-                        if (getParentActivity() == null) {
-                            return;
-                        }
-                        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
-                        builder.setMessage(LocaleController.getString("AreYouSure", R.string.AreYouSure));
-                        builder.setTitle(LocaleController.getString("AppName", R.string.AppName));
-                        builder.setPositiveButton(LocaleController.getString("OK", R.string.OK), new DialogInterface.OnClickListener() {
-                            @Override
-                            public void onClick(DialogInterface dialogInterface, int i) {
-                                ConnectionsManager.getInstance().switchBackend();
-                            }
-                        });
-                        builder.setNegativeButton(LocaleController.getString("Cancel", R.string.Cancel), null);
-                        showAlertDialog(builder);
-                    } else if (i == telegramFaqRow) {
-                        try {
-                            Intent pickIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(LocaleController.getString("TelegramFaqUrl", R.string.TelegramFaqUrl)));
-                            getParentActivity().startActivity(pickIntent);
-                        } catch (Exception e) {
-                            FileLog.e("tmessages", e);
-                        }
-                    } else if (i == contactsReimportRow) {
-
-                    } else if (i == contactsSortRow) {
-                        if (getParentActivity() == null) {
-                            return;
-                        }
-                        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
-                        builder.setTitle(LocaleController.getString("SortBy", R.string.SortBy));
-                        builder.setItems(new CharSequence[] {
-                                LocaleController.getString("Default", R.string.Default),
-                                LocaleController.getString("SortFirstName", R.string.SortFirstName),
-                                LocaleController.getString("SortLastName", R.string.SortLastName)
-                        }, new DialogInterface.OnClickListener() {
-                            @Override
-                            public void onClick(DialogInterface dialog, int which) {
-                                SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
-                                SharedPreferences.Editor editor = preferences.edit();
-                                editor.putInt("sortContactsBy", which);
-                                editor.commit();
-                                if (listView != null) {
-                                    listView.invalidateViews();
-                                }
-                            }
-                        });
-                        builder.setNegativeButton(LocaleController.getString("Cancel", R.string.Cancel), null);
-                        showAlertDialog(builder);
-                    } else if (i == wifiDownloadRow || i == mobileDownloadRow || i == roamingDownloadRow) {
-                        if (getParentActivity() == null) {
-                            return;
-                        }
-                        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
-
-                        int mask = 0;
-                        if (i == mobileDownloadRow) {
-                            builder.setTitle(LocaleController.getString("WhenUsingMobileData", R.string.WhenUsingMobileData));
-                            mask = MediaController.getInstance().mobileDataDownloadMask;
-                        } else if (i == wifiDownloadRow) {
-                            builder.setTitle(LocaleController.getString("WhenConnectedOnWiFi", R.string.WhenConnectedOnWiFi));
-                            mask = MediaController.getInstance().wifiDownloadMask;
-                        } else if (i == roamingDownloadRow) {
-                            builder.setTitle(LocaleController.getString("WhenRoaming", R.string.WhenRoaming));
-                            mask = MediaController.getInstance().roamingDownloadMask;
-                        }
-                        builder.setMultiChoiceItems(
-                                new CharSequence[]{LocaleController.getString("AttachPhoto", R.string.AttachPhoto), LocaleController.getString("AttachAudio", R.string.AttachAudio), LocaleController.getString("AttachAudio", R.string.AttachVideo), LocaleController.getString("AttachAudio", R.string.AttachDocument)},
-                                new boolean[]{(mask & MediaController.AUTODOWNLOAD_MASK_PHOTO) != 0, (mask & MediaController.AUTODOWNLOAD_MASK_AUDIO) != 0, (mask & MediaController.AUTODOWNLOAD_MASK_VIDEO) != 0, (mask & MediaController.AUTODOWNLOAD_MASK_DOCUMENT) != 0},
-                                new DialogInterface.OnMultiChoiceClickListener() {
-                                    @Override
-                                    public void onClick(DialogInterface dialog, int which, boolean isChecked) {
-                                        int mask = 0;
-                                        SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
-                                        SharedPreferences.Editor editor = preferences.edit();
-                                        if (i == mobileDownloadRow) {
-                                            mask = MediaController.getInstance().mobileDataDownloadMask;
-                                        } else if (i == wifiDownloadRow) {
-                                            mask = MediaController.getInstance().wifiDownloadMask;
-                                        } else if (i == roamingDownloadRow) {
-                                            mask = MediaController.getInstance().roamingDownloadMask;
-                                        }
-
-                                        int maskDiff = 0;
-                                        if (which == 0) {
-                                            maskDiff = MediaController.AUTODOWNLOAD_MASK_PHOTO;
-                                        } else if (which == 1) {
-                                            maskDiff = MediaController.AUTODOWNLOAD_MASK_AUDIO;
-                                        } else if (which == 2) {
-                                            maskDiff = MediaController.AUTODOWNLOAD_MASK_VIDEO;
-                                        } else if (which == 3) {
-                                            maskDiff = MediaController.AUTODOWNLOAD_MASK_DOCUMENT;
-                                        }
-
-                                        if (isChecked) {
-                                            mask |= maskDiff;
-                                        } else {
-                                            mask &= ~maskDiff;
-                                        }
-
-                                        if (i == mobileDownloadRow) {
-                                            editor.putInt("mobileDataDownloadMask", mask);
-                                            mask = MediaController.getInstance().mobileDataDownloadMask = mask;
-                                        } else if (i == wifiDownloadRow) {
-                                            editor.putInt("wifiDownloadMask", mask);
-                                            MediaController.getInstance().wifiDownloadMask = mask;
-                                        } else if (i == roamingDownloadRow) {
-                                            editor.putInt("roamingDownloadMask", mask);
-                                            MediaController.getInstance().roamingDownloadMask = mask;
-                                        }
-                                        editor.commit();
-                                        if (listView != null) {
-                                            listView.invalidateViews();
-                                        }
-                                    }
-                                });
-                        builder.setNegativeButton(LocaleController.getString("OK", R.string.OK), null);
-                        showAlertDialog(builder);
-                    }
+            }
+        });
+        ActionBarMenu menu = actionBar.createMenu();
+        ActionBarMenuItem searchItem = menu.addItem(search_button, R.drawable.ic_ab_search).setIsSearchField(true).setActionBarMenuItemSearchListener(new ActionBarMenuItem.ActionBarMenuItemSearchListener() {
+            @Override
+            public void onSearchExpand() {
+                if (otherItem != null) {
+                    otherItem.setVisibility(View.GONE);
                 }
-            });
+                searchAdapter.loadFaqWebPage();
+                listView.setAdapter(searchAdapter);
+                listView.setEmptyView(emptyView);
+                avatarContainer.setVisibility(View.GONE);
+                writeButton.setVisibility(View.GONE);
+                nameTextView.setVisibility(View.GONE);
+                onlineTextView.setVisibility(View.GONE);
+                extraHeightView.setVisibility(View.GONE);
+                fragmentView.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+                fragmentView.setTag(Theme.key_windowBackgroundWhite);
+                needLayout();
+            }
+
+            @Override
+            public void onSearchCollapse() {
+                if (otherItem != null) {
+                    otherItem.setVisibility(View.VISIBLE);
+                }
+                listView.setAdapter(listAdapter);
+                listView.setEmptyView(null);
+                emptyView.setVisibility(View.GONE);
+                avatarContainer.setVisibility(View.VISIBLE);
+                writeButton.setVisibility(View.VISIBLE);
+                nameTextView.setVisibility(View.VISIBLE);
+                onlineTextView.setVisibility(View.VISIBLE);
+                extraHeightView.setVisibility(View.VISIBLE);
+                fragmentView.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundGray));
+                fragmentView.setTag(Theme.key_windowBackgroundGray);
+                needLayout();
+            }
+
+            @Override
+            public void onTextChanged(EditText editText) {
+                searchAdapter.search(editText.getText().toString().toLowerCase());
+            }
+        });
+        searchItem.setContentDescription(LocaleController.getString("SearchInSettings", R.string.SearchInSettings));
+        searchItem.setSearchFieldHint(LocaleController.getString("SearchInSettings", R.string.SearchInSettings));
+
+        otherItem = menu.addItem(0, R.drawable.ic_ab_other);
+        otherItem.setContentDescription(LocaleController.getString("AccDescrMoreOptions", R.string.AccDescrMoreOptions));
+        otherItem.addSubItem(edit_name, R.drawable.msg_edit, LocaleController.getString("EditName", R.string.EditName));
+        otherItem.addSubItem(logout, R.drawable.msg_leave, LocaleController.getString("LogOut", R.string.LogOut));
+
+        int scrollTo;
+        int scrollToPosition = 0;
+        Object writeButtonTag = null;
+        if (listView != null) {
+            scrollTo = layoutManager.findFirstVisibleItemPosition();
+            View topView = layoutManager.findViewByPosition(scrollTo);
+            if (topView != null) {
+                scrollToPosition = topView.getTop();
+            } else {
+                scrollTo = -1;
+            }
+            writeButtonTag = writeButton.getTag();
         } else {
-            ViewGroup parent = (ViewGroup)fragmentView.getParent();
-            if (parent != null) {
-                parent.removeView(fragmentView);
+            scrollTo = -1;
+        }
+
+        listAdapter = new ListAdapter(context);
+        searchAdapter = new SearchAdapter(context);
+
+        fragmentView = new FrameLayout(context);
+        fragmentView.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundGray));
+        fragmentView.setTag(Theme.key_windowBackgroundGray);
+        FrameLayout frameLayout = (FrameLayout) fragmentView;
+
+        listView = new RecyclerListView(context);
+        listView.setVerticalScrollBarEnabled(false);
+        listView.setLayoutManager(layoutManager = new LinearLayoutManager(context, LinearLayoutManager.VERTICAL, false) {
+            @Override
+            public boolean supportsPredictiveItemAnimations() {
+                return false;
+            }
+        });
+        listView.setGlowColor(Theme.getColor(Theme.key_avatar_backgroundActionBarBlue));
+        frameLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP | Gravity.LEFT));
+        listView.setAdapter(listAdapter);
+        listView.setItemAnimator(null);
+        listView.setLayoutAnimation(null);
+        listView.setOnItemClickListener((view, position) -> {
+            if (listView.getAdapter() == listAdapter) {
+                if (position == notificationRow) {
+                    presentFragment(new NotificationsSettingsActivity());
+                } else if (position == privacyRow) {
+                    presentFragment(new PrivacySettingsActivity());
+                } else if (position == dataRow) {
+                    presentFragment(new DataSettingsActivity());
+                } else if (position == chatRow) {
+                    presentFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_BASIC));
+                } else if (position == helpRow) {
+                    showHelpAlert();
+                } else if (position == languageRow) {
+                    presentFragment(new LanguageSelectActivity());
+                } else if (position == usernameRow) {
+                    presentFragment(new ChangeUsernameActivity());
+                } else if (position == bioRow) {
+                    if (userInfo != null) {
+                        presentFragment(new ChangeBioActivity());
+                    }
+                } else if (position == numberRow) {
+                    presentFragment(new ActionIntroActivity(ActionIntroActivity.ACTION_TYPE_CHANGE_PHONE_NUMBER));
+                }
+            } else {
+                if (position < 0) {
+                    return;
+                }
+                Object object = numberRow;
+                if (searchAdapter.searchWas) {
+                    if (position < searchAdapter.searchResults.size()) {
+                        object = searchAdapter.searchResults.get(position);
+                    } else {
+                        position -= searchAdapter.searchResults.size() + 1;
+                        if (position >= 0 && position < searchAdapter.faqSearchResults.size()) {
+                            object = searchAdapter.faqSearchResults.get(position);
+                        }
+                    }
+                } else {
+                    position--;
+                    if (position < 0) {
+                        return;
+                    }
+                    if (position < searchAdapter.recentSearches.size()) {
+                        object = searchAdapter.recentSearches.get(position);
+                    }
+                }
+                if (object instanceof SearchAdapter.SearchResult) {
+                    SearchAdapter.SearchResult result = (SearchAdapter.SearchResult) object;
+                    result.open();
+                } else if (object instanceof SearchAdapter.FaqSearchResult) {
+                    SearchAdapter.FaqSearchResult result = (SearchAdapter.FaqSearchResult) object;
+                    NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.openArticle, searchAdapter.faqWebPage, result.url);
+                }
+                if (object != null) {
+                    searchAdapter.addRecent(object);
+                }
+            }
+        });
+
+        listView.setOnItemLongClickListener(new RecyclerListView.OnItemLongClickListener() {
+
+            private int pressCount = 0;
+
+            @Override
+            public boolean onItemClick(View view, int position) {
+                if (listView.getAdapter() == searchAdapter) {
+                    AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
+                    builder.setTitle(LocaleController.getString("AppName", R.string.AppName));
+                    builder.setMessage(LocaleController.getString("ClearSearch", R.string.ClearSearch));
+                    builder.setPositiveButton(LocaleController.getString("ClearButton", R.string.ClearButton).toUpperCase(), (dialogInterface, i) -> searchAdapter.clearRecent());
+                    builder.setNegativeButton(LocaleController.getString("Cancel", R.string.Cancel), null);
+                    showDialog(builder.create());
+                    return true;
+                }
+                if (position == versionRow) {
+                    pressCount++;
+                    if (pressCount >= 2 || BuildVars.DEBUG_PRIVATE_VERSION) {
+                        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
+                        builder.setTitle(LocaleController.getString("DebugMenu", R.string.DebugMenu));
+                        CharSequence[] items;
+                        items = new CharSequence[]{
+                                LocaleController.getString("DebugMenuImportContacts", R.string.DebugMenuImportContacts),
+                                LocaleController.getString("DebugMenuReloadContacts", R.string.DebugMenuReloadContacts),
+                                LocaleController.getString("DebugMenuResetContacts", R.string.DebugMenuResetContacts),
+                                LocaleController.getString("DebugMenuResetDialogs", R.string.DebugMenuResetDialogs),
+                                BuildVars.LOGS_ENABLED ? LocaleController.getString("DebugMenuDisableLogs", R.string.DebugMenuDisableLogs) : LocaleController.getString("DebugMenuEnableLogs", R.string.DebugMenuEnableLogs),
+                                SharedConfig.inappCamera ? LocaleController.getString("DebugMenuDisableCamera", R.string.DebugMenuDisableCamera) : LocaleController.getString("DebugMenuEnableCamera", R.string.DebugMenuEnableCamera),
+                                LocaleController.getString("DebugMenuClearMediaCache", R.string.DebugMenuClearMediaCache),
+                                LocaleController.getString("DebugMenuCallSettings", R.string.DebugMenuCallSettings),
+                                null,
+                                BuildVars.DEBUG_PRIVATE_VERSION ? "Check for app updates" : null,
+                                LocaleController.getString("DebugMenuReadAllDialogs", R.string.DebugMenuReadAllDialogs),
+                        };
+                        builder.setItems(items, (dialog, which) -> {
+                            if (which == 0) {
+                                UserConfig.getInstance(currentAccount).syncContacts = true;
+                                UserConfig.getInstance(currentAccount).saveConfig(false);
+                                ContactsController.getInstance(currentAccount).forceImportContacts();
+                            } else if (which == 1) {
+                                ContactsController.getInstance(currentAccount).loadContacts(false, 0);
+                            } else if (which == 2) {
+                                ContactsController.getInstance(currentAccount).resetImportedContacts();
+                            } else if (which == 3) {
+                                MessagesController.getInstance(currentAccount).forceResetDialogs();
+                            } else if (which == 4) {
+                                BuildVars.LOGS_ENABLED = !BuildVars.LOGS_ENABLED;
+                                SharedPreferences sharedPreferences = ApplicationLoader.applicationContext.getSharedPreferences("systemConfig", Context.MODE_PRIVATE);
+                                sharedPreferences.edit().putBoolean("logsEnabled", BuildVars.LOGS_ENABLED).commit();
+                            } else if (which == 5) {
+                                SharedConfig.toggleInappCamera();
+                            } else if (which == 6) {
+                                MessagesStorage.getInstance(currentAccount).clearSentMedia();
+                                SharedConfig.setNoSoundHintShowed(false);
+                                SharedPreferences.Editor editor = MessagesController.getGlobalMainSettings().edit();
+                                editor.remove("archivehint").remove("archivehint_l").remove("gifhint").remove("soundHint").commit();
+                            } else if (which == 7) {
+                                VoIPHelper.showCallDebugSettings(getParentActivity());
+                            } else if (which == 8) {
+                                SharedConfig.toggleRoundCamera16to9();
+                            } else if (which == 9) {
+                                ((LaunchActivity) getParentActivity()).checkAppUpdate(true);
+                            } else if (which == 10) {
+                                MessagesStorage.getInstance(currentAccount).readAllDialogs();
+                            }
+                        });
+                        builder.setNegativeButton(LocaleController.getString("Cancel", R.string.Cancel), null);
+                        showDialog(builder.create());
+                    } else {
+                        try {
+                            Toast.makeText(getParentActivity(), "¯\\_(ツ)_/¯", Toast.LENGTH_SHORT).show();
+                        } catch (Exception e) {
+                            FileLog.e(e);
+                        }
+                    }
+                    return true;
+                }
+                return false;
+            }
+        });
+
+        emptyView = new EmptyTextProgressView(context);
+        emptyView.showTextView();
+        emptyView.setTextSize(18);
+        emptyView.setVisibility(View.GONE);
+        emptyView.setShowAtCenter(true);
+        frameLayout.addView(emptyView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
+
+        frameLayout.addView(actionBar);
+
+        extraHeightView = new View(context);
+        extraHeightView.setPivotY(0);
+        extraHeightView.setBackgroundColor(Theme.getColor(Theme.key_avatar_backgroundActionBarBlue));
+        frameLayout.addView(extraHeightView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 88));
+
+        shadowView = new View(context);
+        shadowView.setBackgroundResource(R.drawable.header_shadow);
+        frameLayout.addView(shadowView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 3));
+
+        avatarContainer = new FrameLayout(context);
+        avatarContainer.setPivotX(LocaleController.isRTL ? AndroidUtilities.dp(42) : 0);
+        avatarContainer.setPivotY(0);
+        frameLayout.addView(avatarContainer, LayoutHelper.createFrame(42, 42, Gravity.TOP | (LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT), (LocaleController.isRTL ? 0 : 64), 0, (LocaleController.isRTL ? 112 : 0), 0));
+        avatarContainer.setOnClickListener(v -> {
+            if (avatar != null) {
+                return;
+            }
+            TLRPC.User user = MessagesController.getInstance(currentAccount).getUser(UserConfig.getInstance(currentAccount).getClientUserId());
+            if (user != null && user.photo != null && user.photo.photo_big != null) {
+                PhotoViewer.getInstance().setParentActivity(getParentActivity());
+                if (user.photo.dc_id != 0) {
+                    user.photo.photo_big.dc_id = user.photo.dc_id;
+                }
+                PhotoViewer.getInstance().openPhoto(user.photo.photo_big, provider);
+            }
+        });
+
+        avatarImage = new BackupImageView(context);
+        avatarImage.setRoundRadius(AndroidUtilities.dp(21));
+        avatarImage.setContentDescription(LocaleController.getString("AccDescrProfilePicture", R.string.AccDescrProfilePicture));
+        avatarContainer.addView(avatarImage, LayoutHelper.createFrame(42, 42));
+
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(0x55000000);
+
+        avatarProgressView = new RadialProgressView(context) {
+            @Override
+            protected void onDraw(Canvas canvas) {
+                if (avatarImage != null && avatarImage.getImageReceiver().hasNotThumb()) {
+                    paint.setAlpha((int) (0x55 * avatarImage.getImageReceiver().getCurrentAlpha()));
+                    canvas.drawCircle(getMeasuredWidth() / 2, getMeasuredHeight() / 2, AndroidUtilities.dp(21), paint);
+                }
+                super.onDraw(canvas);
+            }
+        };
+        avatarProgressView.setSize(AndroidUtilities.dp(26));
+        avatarProgressView.setProgressColor(0xffffffff);
+        avatarContainer.addView(avatarProgressView, LayoutHelper.createFrame(42, 42));
+
+        showAvatarProgress(false, false);
+
+        nameTextView = new TextView(context) {
+            @Override
+            protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+                super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+                setPivotX(LocaleController.isRTL ? getMeasuredWidth() : 0);
+            }
+        };
+        nameTextView.setTextColor(Theme.getColor(Theme.key_profile_title));
+        nameTextView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 18);
+        nameTextView.setLines(1);
+        nameTextView.setMaxLines(1);
+        nameTextView.setSingleLine(true);
+        nameTextView.setEllipsize(TextUtils.TruncateAt.END);
+        nameTextView.setGravity(LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT);
+        nameTextView.setTypeface(AndroidUtilities.getTypeface("fonts/rmedium.ttf"));
+        nameTextView.setPivotY(0);
+        frameLayout.addView(nameTextView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, (LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT) | Gravity.TOP, LocaleController.isRTL ? 48 : 118, 0, LocaleController.isRTL ? 166 : 96, 0));
+
+        onlineTextView = new TextView(context);
+        onlineTextView.setTextColor(Theme.getColor(Theme.key_profile_status));
+        onlineTextView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        onlineTextView.setLines(1);
+        onlineTextView.setMaxLines(1);
+        onlineTextView.setSingleLine(true);
+        onlineTextView.setEllipsize(TextUtils.TruncateAt.END);
+        onlineTextView.setGravity(LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT);
+        frameLayout.addView(onlineTextView, LayoutHelper.createFrame(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, (LocaleController.isRTL ? Gravity.RIGHT : Gravity.LEFT) | Gravity.TOP, LocaleController.isRTL ? 48 : 118, 0, LocaleController.isRTL ? 166 : 96, 0));
+
+        writeButton = new ImageView(context);
+        Drawable drawable = Theme.createSimpleSelectorCircleDrawable(AndroidUtilities.dp(56), Theme.getColor(Theme.key_profile_actionBackground), Theme.getColor(Theme.key_profile_actionPressedBackground));
+        if (Build.VERSION.SDK_INT < 21) {
+            Drawable shadowDrawable = context.getResources().getDrawable(R.drawable.floating_shadow_profile).mutate();
+            shadowDrawable.setColorFilter(new PorterDuffColorFilter(0xff000000, PorterDuff.Mode.MULTIPLY));
+            CombinedDrawable combinedDrawable = new CombinedDrawable(shadowDrawable, drawable, 0, 0);
+            combinedDrawable.setIconSize(AndroidUtilities.dp(56), AndroidUtilities.dp(56));
+            drawable = combinedDrawable;
+        }
+        writeButton.setBackgroundDrawable(drawable);
+        writeButton.setImageResource(R.drawable.menu_camera_av);
+        writeButton.setColorFilter(new PorterDuffColorFilter(Theme.getColor(Theme.key_profile_actionIcon), PorterDuff.Mode.MULTIPLY));
+        writeButton.setScaleType(ImageView.ScaleType.CENTER);
+        if (Build.VERSION.SDK_INT >= 21) {
+            StateListAnimator animator = new StateListAnimator();
+            animator.addState(new int[]{android.R.attr.state_pressed}, ObjectAnimator.ofFloat(writeButton, "translationZ", AndroidUtilities.dp(2), AndroidUtilities.dp(4)).setDuration(200));
+            animator.addState(new int[]{}, ObjectAnimator.ofFloat(writeButton, "translationZ", AndroidUtilities.dp(4), AndroidUtilities.dp(2)).setDuration(200));
+            writeButton.setStateListAnimator(animator);
+            writeButton.setOutlineProvider(new ViewOutlineProvider() {
+                @SuppressLint("NewApi")
+                @Override
+                public void getOutline(View view, Outline outline) {
+                    outline.setOval(0, 0, AndroidUtilities.dp(56), AndroidUtilities.dp(56));
+                }
+            });
+        }
+        frameLayout.addView(writeButton, LayoutHelper.createFrame(Build.VERSION.SDK_INT >= 21 ? 56 : 60, Build.VERSION.SDK_INT >= 21 ? 56 : 60, (LocaleController.isRTL ? Gravity.LEFT : Gravity.RIGHT) | Gravity.TOP, LocaleController.isRTL ? 16 : 0, 0, LocaleController.isRTL ? 0 : 16, 0));
+        writeButton.setOnClickListener(v -> {
+            TLRPC.User user = MessagesController.getInstance(currentAccount).getUser(UserConfig.getInstance(currentAccount).getClientUserId());
+            if (user == null) {
+                user = UserConfig.getInstance(currentAccount).getCurrentUser();
+            }
+            if (user == null) {
+                return;
+            }
+            imageUpdater.openMenu(user.photo != null && user.photo.photo_big != null && !(user.photo instanceof TLRPC.TL_userProfilePhotoEmpty), () -> MessagesController.getInstance(currentAccount).deleteUserPhoto(null));
+        });
+        writeButton.setContentDescription(LocaleController.getString("AccDescrChangeProfilePicture", R.string.AccDescrChangeProfilePicture));
+
+        if (scrollTo != -1) {
+            layoutManager.scrollToPositionWithOffset(scrollTo, scrollToPosition);
+
+            if (writeButtonTag != null) {
+                writeButton.setTag(0);
+                writeButton.setScaleX(0.2f);
+                writeButton.setScaleY(0.2f);
+                writeButton.setAlpha(0.0f);
+                writeButton.setVisibility(View.GONE);
             }
         }
+
+        needLayout();
+
+        listView.setOnScrollListener(new RecyclerView.OnScrollListener() {
+
+            @Override
+            public void onScrollStateChanged(RecyclerView recyclerView, int newState) {
+                if (newState == RecyclerView.SCROLL_STATE_DRAGGING) {
+                    if (listView.getAdapter() == searchAdapter) {
+                        AndroidUtilities.hideKeyboard(getParentActivity().getCurrentFocus());
+                    }
+                }
+            }
+
+            @Override
+            public void onScrolled(RecyclerView recyclerView, int dx, int dy) {
+                if (layoutManager.getItemCount() == 0) {
+                    return;
+                }
+                int height = 0;
+                View child = recyclerView.getChildAt(0);
+                if (child != null && avatarContainer.getVisibility() == View.VISIBLE) {
+                    if (layoutManager.findFirstVisibleItemPosition() == 0) {
+                        height = AndroidUtilities.dp(88) + (child.getTop() < 0 ? child.getTop() : 0);
+                    }
+                    if (extraHeight != height) {
+                        extraHeight = height;
+                        needLayout();
+                    }
+                }
+            }
+        });
+
         return fragmentView;
     }
 
     @Override
-    protected void onDialogDismiss() {
-        MediaController.getInstance().checkAutodownloadSettings();
-    }
+    public void didUploadPhoto(final TLRPC.InputFile file, final TLRPC.PhotoSize bigSize, final TLRPC.PhotoSize smallSize) {
+        AndroidUtilities.runOnUIThread(() -> {
+            if (file != null) {
+                TLRPC.TL_photos_uploadProfilePhoto req = new TLRPC.TL_photos_uploadProfilePhoto();
+                req.file = file;
+                ConnectionsManager.getInstance(currentAccount).sendRequest(req, (response, error) -> {
+                    if (error == null) {
+                        TLRPC.User user = MessagesController.getInstance(currentAccount).getUser(UserConfig.getInstance(currentAccount).getClientUserId());
+                        if (user == null) {
+                            user = UserConfig.getInstance(currentAccount).getCurrentUser();
+                            if (user == null) {
+                                return;
+                            }
+                            MessagesController.getInstance(currentAccount).putUser(user, false);
+                        } else {
+                            UserConfig.getInstance(currentAccount).setCurrentUser(user);
+                        }
+                        TLRPC.TL_photos_photo photo = (TLRPC.TL_photos_photo) response;
+                        ArrayList<TLRPC.PhotoSize> sizes = photo.photo.sizes;
+                        TLRPC.PhotoSize small = FileLoader.getClosestPhotoSizeWithSize(sizes, 150);
+                        TLRPC.PhotoSize big = FileLoader.getClosestPhotoSizeWithSize(sizes, 800);
+                        user.photo = new TLRPC.TL_userProfilePhoto();
+                        user.photo.photo_id = photo.photo.id;
+                        if (small != null) {
+                            user.photo.photo_small = small.location;
+                        }
+                        if (big != null) {
+                            user.photo.photo_big = big.location;
+                        } else if (small != null) {
+                            user.photo.photo_small = small.location;
+                        }
 
-    @Override
-    public PhotoViewer.PlaceProviderObject getPlaceForPhoto(MessageObject messageObject, TLRPC.FileLocation fileLocation, int index) {
-        if (fileLocation == null) {
-            return null;
-        }
-        TLRPC.User user = MessagesController.getInstance().getUser(UserConfig.getClientUserId());
-        if (user != null && user.photo != null && user.photo.photo_big != null) {
-            TLRPC.FileLocation photoBig = user.photo.photo_big;
-            if (photoBig.local_id == fileLocation.local_id && photoBig.volume_id == fileLocation.volume_id && photoBig.dc_id == fileLocation.dc_id) {
-                int count = listView.getChildCount();
-                for (int a = 0; a < count; a++) {
-                    View view = listView.getChildAt(a);
-                    BackupImageView avatarImage = (BackupImageView)view.findViewById(R.id.settings_avatar_image);
-                    if (avatarImage != null) {
-                        int coords[] = new int[2];
-                        avatarImage.getLocationInWindow(coords);
-                        PhotoViewer.PlaceProviderObject object = new PhotoViewer.PlaceProviderObject();
-                        object.viewX = coords[0];
-                        object.viewY = coords[1] - AndroidUtilities.statusBarHeight;
-                        object.parentView = listView;
-                        object.imageReceiver = avatarImage.imageReceiver;
-                        object.user_id = UserConfig.getClientUserId();
-                        object.thumb = object.imageReceiver.getBitmap();
-                        object.size = -1;
-                        return object;
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-    @Override
-    public void willSwitchFromPhoto(MessageObject messageObject, TLRPC.FileLocation fileLocation, int index) { }
-
-    @Override
-    public void willHidePhotoViewer() { }
-
-    @Override
-    public boolean isPhotoChecked(int index) { return false; }
-
-    @Override
-    public void setPhotoChecked(int index) { }
-
-    @Override
-    public void cancelButtonPressed() { }
-
-    @Override
-    public void sendButtonPressed(int index) { }
-
-    @Override
-    public int getSelectedCount() { return 0; }
-
-    public void performAskAQuestion() {
-        final SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
-        int uid = preferences.getInt("support_id", 0);
-        TLRPC.User supportUser = null;
-        if (uid != 0) {
-            supportUser = MessagesController.getInstance().getUser(uid);
-            if (supportUser == null) {
-                String userString = preferences.getString("support_user", null);
-                if (userString != null) {
-                    try {
-                        byte[] datacentersBytes = Base64.decode(userString, Base64.DEFAULT);
-                        if (datacentersBytes != null) {
-                            SerializedData data = new SerializedData(datacentersBytes);
-                            supportUser = (TLRPC.User)TLClassStore.Instance().TLdeserialize(data, data.readInt32());
-                            if (supportUser != null && supportUser.id == 333000) {
-                                supportUser = null;
+                        if (photo != null) {
+                            if (small != null && avatar != null) {
+                                File destFile = FileLoader.getPathToAttach(small, true);
+                                File src = FileLoader.getPathToAttach(avatar, true);
+                                src.renameTo(destFile);
+                                String oldKey = avatar.volume_id + "_" + avatar.local_id + "@50_50";
+                                String newKey = small.location.volume_id + "_" + small.location.local_id + "@50_50";
+                                ImageLoader.getInstance().replaceImageInCache(oldKey, newKey, ImageLocation.getForUser(user, false), true);
+                            }
+                            if (big != null && avatarBig != null) {
+                                File destFile = FileLoader.getPathToAttach(big, true);
+                                File src = FileLoader.getPathToAttach(avatarBig, true);
+                                src.renameTo(destFile);
                             }
                         }
-                    } catch (Exception e) {
-                        FileLog.e("tmessages", e);
-                        supportUser = null;
-                    }
-                }
-            }
-        }
-        if (supportUser == null) {
-            final ProgressDialog progressDialog = new ProgressDialog(getParentActivity());
-            progressDialog.setMessage(LocaleController.getString("Loading", R.string.Loading));
-            progressDialog.setCanceledOnTouchOutside(false);
-            progressDialog.setCancelable(false);
-            progressDialog.show();
-            TLRPC.TL_help_getSupport req = new TLRPC.TL_help_getSupport();
-            ConnectionsManager.getInstance().performRpc(req, new RPCRequest.RPCRequestDelegate() {
-                @Override
-                public void run(TLObject response, TLRPC.TL_error error) {
-                    if (error == null) {
 
-                        final TLRPC.TL_help_support res = (TLRPC.TL_help_support)response;
-                        AndroidUtilities.RunOnUIThread(new Runnable() {
-                            @Override
-                            public void run() {
-                                SharedPreferences.Editor editor = preferences.edit();
-                                editor.putInt("support_id", res.user.id);
-                                SerializedData data = new SerializedData();
-                                res.user.serializeToStream(data);
-                                editor.putString("support_user", Base64.encodeToString(data.toByteArray(), Base64.DEFAULT));
-                                editor.commit();
-                                try {
-                                    progressDialog.dismiss();
-                                } catch (Exception e) {
-                                    FileLog.e("tmessages", e);
-                                }
-                                ArrayList<TLRPC.User> users = new ArrayList<TLRPC.User>();
-                                users.add(res.user);
-                                MessagesStorage.getInstance().putUsersAndChats(users, null, true, true);
-                                MessagesController.getInstance().putUser(res.user, false);
-                                Bundle args = new Bundle();
-                                args.putInt("user_id", res.user.id);
-                                presentFragment(new ChatActivity(args));
-                            }
-                        });
-                    } else {
-                        AndroidUtilities.RunOnUIThread(new Runnable() {
-                            @Override
-                            public void run() {
-                                try {
-                                    progressDialog.dismiss();
-                                } catch (Exception e) {
-                                    FileLog.e("tmessages", e);
-                                }
-                            }
-                        });
+                        MessagesStorage.getInstance(currentAccount).clearUserPhotos(user.id);
+                        ArrayList<TLRPC.User> users = new ArrayList<>();
+                        users.add(user);
+                        MessagesStorage.getInstance(currentAccount).putUsersAndChats(users, null, false, true);
                     }
+                    AndroidUtilities.runOnUIThread(() -> {
+                        avatar = null;
+                        avatarBig = null;
+                        updateUserData();
+                        showAvatarProgress(false, true);
+                        NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.updateInterfaces, MessagesController.UPDATE_MASK_ALL);
+                        NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.mainUserInfoChanged);
+                        UserConfig.getInstance(currentAccount).saveConfig(true);
+                    });
+                });
+            } else {
+                avatar = smallSize.location;
+                avatarBig = bigSize.location;
+                avatarImage.setImage(ImageLocation.getForLocal(avatar), "50_50", avatarDrawable, null);
+                showAvatarProgress(true, false);
+            }
+        });
+    }
+
+    private void showAvatarProgress(boolean show, boolean animated) {
+        if (avatarProgressView == null) {
+            return;
+        }
+        if (avatarAnimation != null) {
+            avatarAnimation.cancel();
+            avatarAnimation = null;
+        }
+        if (animated) {
+            avatarAnimation = new AnimatorSet();
+            if (show) {
+                avatarProgressView.setVisibility(View.VISIBLE);
+                avatarAnimation.playTogether(ObjectAnimator.ofFloat(avatarProgressView, View.ALPHA, 1.0f));
+            } else {
+                avatarAnimation.playTogether(ObjectAnimator.ofFloat(avatarProgressView, View.ALPHA, 0.0f));
+            }
+            avatarAnimation.setDuration(180);
+            avatarAnimation.addListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(Animator animation) {
+                    if (avatarAnimation == null || avatarProgressView == null) {
+                        return;
+                    }
+                    if (!show) {
+                        avatarProgressView.setVisibility(View.INVISIBLE);
+                    }
+                    avatarAnimation = null;
+                }
+
+                @Override
+                public void onAnimationCancel(Animator animation) {
+                    avatarAnimation = null;
                 }
             });
+            avatarAnimation.start();
         } else {
-            MessagesController.getInstance().putUser(supportUser, true);
-            Bundle args = new Bundle();
-            args.putInt("user_id", supportUser.id);
-            presentFragment(new ChatActivity(args));
+            if (show) {
+                avatarProgressView.setAlpha(1.0f);
+                avatarProgressView.setVisibility(View.VISIBLE);
+            } else {
+                avatarProgressView.setAlpha(0.0f);
+                avatarProgressView.setVisibility(View.INVISIBLE);
+            }
         }
     }
 
     @Override
     public void onActivityResultFragment(int requestCode, int resultCode, Intent data) {
-        avatarUpdater.onActivityResult(requestCode, resultCode, data);
+        imageUpdater.onActivityResult(requestCode, resultCode, data);
     }
 
     @Override
     public void saveSelfArgs(Bundle args) {
-        if (avatarUpdater != null && avatarUpdater.currentPicturePath != null) {
-            args.putString("path", avatarUpdater.currentPicturePath);
+        if (imageUpdater != null && imageUpdater.currentPicturePath != null) {
+            args.putString("path", imageUpdater.currentPicturePath);
         }
     }
 
     @Override
     public void restoreSelfArgs(Bundle args) {
-        if (avatarUpdater != null) {
-            avatarUpdater.currentPicturePath = args.getString("path");
+        if (imageUpdater != null) {
+            imageUpdater.currentPicturePath = args.getString("path");
         }
     }
 
     @Override
-    public void didReceivedNotification(int id, Object... args) {
+    public void didReceivedNotification(int id, int account, Object... args) {
         if (id == NotificationCenter.updateInterfaces) {
-            int mask = (Integer)args[0];
+            int mask = (Integer) args[0];
             if ((mask & MessagesController.UPDATE_MASK_AVATAR) != 0 || (mask & MessagesController.UPDATE_MASK_NAME) != 0) {
-                if (listView != null) {
-                    listView.invalidateViews();
-                }
+                updateUserData();
             }
-        }
-    }
-
-    private void sendLogs() {
-        try {
-            ArrayList<Uri> uris = new ArrayList<Uri>();
-            File sdCard = ApplicationLoader.applicationContext.getExternalFilesDir(null);
-            File dir = new File (sdCard.getAbsolutePath() + "/logs");
-            File[] files = dir.listFiles();
-            for (File file : files) {
-                uris.add(Uri.fromFile(file));
+        } else if (id == NotificationCenter.userInfoDidLoad) {
+            Integer uid = (Integer) args[0];
+            if (uid == UserConfig.getInstance(currentAccount).getClientUserId() && listAdapter != null) {
+                userInfo = (TLRPC.UserFull) args[1];
+                listAdapter.notifyItemChanged(bioRow);
             }
-
-            if (uris.isEmpty()) {
-                return;
+        } else if (id == NotificationCenter.emojiDidLoad) {
+            if (listView != null) {
+                listView.invalidateViews();
             }
-            Intent i = new Intent(Intent.ACTION_SEND_MULTIPLE);
-            i.setType("message/rfc822") ;
-            i.putExtra(Intent.EXTRA_EMAIL, new String[]{BuildVars.SEND_LOGS_EMAIL});
-            i.putExtra(Intent.EXTRA_SUBJECT, "last logs");
-            i.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
-            getParentActivity().startActivity(Intent.createChooser(i, "Select email application."));
-        } catch (Exception e) {
-            e.printStackTrace();
         }
     }
 
@@ -705,9 +838,944 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         if (listAdapter != null) {
             listAdapter.notifyDataSetChanged();
         }
+        updateUserData();
+        fixLayout();
+        setParentActivityTitle(LocaleController.getString("Settings", R.string.Settings));
     }
 
-    private class ListAdapter extends BaseFragmentAdapter {
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        fixLayout();
+    }
+
+    private void needLayout() {
+        FrameLayout.LayoutParams layoutParams;
+        int newTop = (actionBar.getOccupyStatusBar() ? AndroidUtilities.statusBarHeight : 0) + ActionBar.getCurrentActionBarHeight();
+        if (listView != null) {
+            layoutParams = (FrameLayout.LayoutParams) listView.getLayoutParams();
+            if (layoutParams.topMargin != newTop) {
+                layoutParams.topMargin = newTop;
+                listView.setLayoutParams(layoutParams);
+                extraHeightView.setTranslationY(newTop);
+            }
+            layoutParams = (FrameLayout.LayoutParams) emptyView.getLayoutParams();
+            if (layoutParams.topMargin != newTop) {
+                layoutParams.topMargin = newTop;
+                emptyView.setLayoutParams(layoutParams);
+            }
+        }
+
+        if (avatarContainer != null) {
+            int currentExtraHeight;
+            if (avatarContainer.getVisibility() == View.VISIBLE) {
+                currentExtraHeight = extraHeight;
+            } else {
+                currentExtraHeight = 0;
+            }
+
+            float diff = currentExtraHeight / (float) AndroidUtilities.dp(88);
+            extraHeightView.setScaleY(diff);
+            shadowView.setTranslationY(newTop + currentExtraHeight);
+
+            writeButton.setTranslationY((actionBar.getOccupyStatusBar() ? AndroidUtilities.statusBarHeight : 0) + ActionBar.getCurrentActionBarHeight() + currentExtraHeight - AndroidUtilities.dp(29.5f));
+
+            final boolean setVisible = diff > 0.2f;
+            boolean currentVisible = writeButton.getTag() == null;
+            if (setVisible != currentVisible) {
+                if (setVisible) {
+                    writeButton.setTag(null);
+                    writeButton.setVisibility(View.VISIBLE);
+                } else {
+                    writeButton.setTag(0);
+                }
+                if (writeButtonAnimation != null) {
+                    AnimatorSet old = writeButtonAnimation;
+                    writeButtonAnimation = null;
+                    old.cancel();
+                }
+                writeButtonAnimation = new AnimatorSet();
+                if (setVisible) {
+                    writeButtonAnimation.setInterpolator(new DecelerateInterpolator());
+                    writeButtonAnimation.playTogether(
+                            ObjectAnimator.ofFloat(writeButton, "scaleX", 1.0f),
+                            ObjectAnimator.ofFloat(writeButton, "scaleY", 1.0f),
+                            ObjectAnimator.ofFloat(writeButton, "alpha", 1.0f)
+                    );
+                } else {
+                    writeButtonAnimation.setInterpolator(new AccelerateInterpolator());
+                    writeButtonAnimation.playTogether(
+                            ObjectAnimator.ofFloat(writeButton, "scaleX", 0.2f),
+                            ObjectAnimator.ofFloat(writeButton, "scaleY", 0.2f),
+                            ObjectAnimator.ofFloat(writeButton, "alpha", 0.0f)
+                    );
+                }
+                writeButtonAnimation.setDuration(150);
+                writeButtonAnimation.addListener(new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        if (writeButtonAnimation != null && writeButtonAnimation.equals(animation)) {
+                            writeButton.setVisibility(setVisible ? View.VISIBLE : View.GONE);
+                            writeButtonAnimation = null;
+                        }
+                    }
+                });
+                writeButtonAnimation.start();
+            }
+
+            avatarContainer.setScaleX((42 + 18 * diff) / 42.0f);
+            avatarContainer.setScaleY((42 + 18 * diff) / 42.0f);
+            avatarProgressView.setSize(AndroidUtilities.dp(26 / avatarContainer.getScaleX()));
+            avatarProgressView.setStrokeWidth(3 / avatarContainer.getScaleX());
+            float avatarY = (actionBar.getOccupyStatusBar() ? AndroidUtilities.statusBarHeight : 0) + ActionBar.getCurrentActionBarHeight() / 2.0f * (1.0f + diff) - 21 * AndroidUtilities.density + 27 * AndroidUtilities.density * diff;
+            avatarContainer.setTranslationY((float) Math.ceil(avatarY));
+            nameTextView.setTranslationY((float) Math.floor(avatarY) - (float) Math.ceil(AndroidUtilities.density) + (float) Math.floor(7 * AndroidUtilities.density * diff));
+            onlineTextView.setTranslationY((float) Math.floor(avatarY) + AndroidUtilities.dp(22) + (float) Math.floor(11 * AndroidUtilities.density) * diff);
+            nameTextView.setScaleX(1.0f + 0.12f * diff);
+            nameTextView.setScaleY(1.0f + 0.12f * diff);
+
+            if (LocaleController.isRTL) {
+                avatarContainer.setTranslationX(AndroidUtilities.dp(47 + 48) * diff);
+                nameTextView.setTranslationX((21 + 48) * AndroidUtilities.density * diff);
+                onlineTextView.setTranslationX((21 + 48) * AndroidUtilities.density * diff);
+            } else {
+                avatarContainer.setTranslationX(-AndroidUtilities.dp(47) * diff);
+                nameTextView.setTranslationX(-21 * AndroidUtilities.density * diff);
+                onlineTextView.setTranslationX(-21 * AndroidUtilities.density * diff);
+            }
+        }
+    }
+
+    private void fixLayout() {
+        if (fragmentView == null) {
+            return;
+        }
+        fragmentView.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+            @Override
+            public boolean onPreDraw() {
+                if (fragmentView != null) {
+                    needLayout();
+                    fragmentView.getViewTreeObserver().removeOnPreDrawListener(this);
+                }
+                return true;
+            }
+        });
+    }
+
+    private void updateUserData() {
+        TLRPC.User user = MessagesController.getInstance(currentAccount).getUser(UserConfig.getInstance(currentAccount).getClientUserId());
+        if (user == null) {
+            return;
+        }
+        TLRPC.FileLocation photoBig = null;
+        if (user.photo != null) {
+            photoBig = user.photo.photo_big;
+        }
+        avatarDrawable = new AvatarDrawable(user, true);
+
+        avatarDrawable.setColor(Theme.getColor(Theme.key_avatar_backgroundInProfileBlue));
+        if (avatarImage != null) {
+            avatarImage.setImage(ImageLocation.getForUser(user, false), "50_50", avatarDrawable, user);
+            avatarImage.getImageReceiver().setVisible(!PhotoViewer.isShowingImage(photoBig), false);
+
+            nameTextView.setText(UserObject.getUserName(user));
+            onlineTextView.setText(LocaleController.getString("Online", R.string.Online));
+
+            avatarImage.getImageReceiver().setVisible(!PhotoViewer.isShowingImage(photoBig), false);
+        }
+    }
+
+    private void showHelpAlert() {
+        if (getParentActivity() == null) {
+            return;
+        }
+        Context context = getParentActivity();
+        BottomSheet.Builder builder = new BottomSheet.Builder(context);
+        builder.setApplyTopPadding(false);
+
+        LinearLayout linearLayout = new LinearLayout(context);
+        linearLayout.setOrientation(LinearLayout.VERTICAL);
+
+        HeaderCell headerCell = new HeaderCell(context, true, 23, 15, false);
+        headerCell.setHeight(47);
+        headerCell.setText(LocaleController.getString("SettingsHelp", R.string.SettingsHelp));
+        linearLayout.addView(headerCell);
+
+        LinearLayout linearLayoutInviteContainer = new LinearLayout(context);
+        linearLayoutInviteContainer.setOrientation(LinearLayout.VERTICAL);
+        linearLayout.addView(linearLayoutInviteContainer, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+
+        int count = 6;
+        for (int a = 0; a < count; a++) {
+            if (a >= 3 && a <= 4 && !BuildVars.LOGS_ENABLED || a == 5 && !BuildVars.DEBUG_VERSION) {
+                continue;
+            }
+            TextCell textCell = new TextCell(context);
+            String text;
+            switch (a) {
+                case 0:
+                    text = LocaleController.getString("AskAQuestion", R.string.AskAQuestion);
+                    break;
+                case 1:
+                    text = LocaleController.getString("TelegramFAQ", R.string.TelegramFAQ);
+                    break;
+                case 2:
+                    text = LocaleController.getString("PrivacyPolicy", R.string.PrivacyPolicy);
+                    break;
+                case 3:
+                    text = LocaleController.getString("DebugSendLogs", R.string.DebugSendLogs);
+                    break;
+                case 4:
+                    text = LocaleController.getString("DebugClearLogs", R.string.DebugClearLogs);
+                    break;
+                case 5:
+                default:
+                    text = "Switch Backend";
+                    break;
+            }
+            textCell.setText(text, BuildVars.LOGS_ENABLED || BuildVars.DEBUG_VERSION ? a != count - 1 : a != 2);
+            textCell.setTag(a);
+            textCell.setBackgroundDrawable(Theme.getSelectorDrawable(false));
+            linearLayoutInviteContainer.addView(textCell, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+            textCell.setOnClickListener(v2 -> {
+                Integer tag = (Integer) v2.getTag();
+                switch (tag) {
+                    case 0: {
+                        showDialog(AlertsCreator.createSupportAlert(SettingsActivity.this));
+                        break;
+                    }
+                    case 1:
+                        Browser.openUrl(getParentActivity(), LocaleController.getString("TelegramFaqUrl", R.string.TelegramFaqUrl));
+                        break;
+                    case 2:
+                        Browser.openUrl(getParentActivity(), LocaleController.getString("PrivacyPolicyUrl", R.string.PrivacyPolicyUrl));
+                        break;
+                    case 3:
+                        sendLogs();
+                        break;
+                    case 4:
+                        FileLog.cleanupLogs();
+                        break;
+                    case 5: {
+                        if (getParentActivity() == null) {
+                            return;
+                        }
+                        AlertDialog.Builder builder1 = new AlertDialog.Builder(getParentActivity());
+                        builder1.setMessage(LocaleController.getString("AreYouSure", R.string.AreYouSure));
+                        builder1.setTitle(LocaleController.getString("AppName", R.string.AppName));
+                        builder1.setPositiveButton(LocaleController.getString("OK", R.string.OK), (dialogInterface, i) -> {
+                            SharedConfig.pushAuthKey = null;
+                            SharedConfig.pushAuthKeyId = null;
+                            SharedConfig.saveConfig();
+                            ConnectionsManager.getInstance(currentAccount).switchBackend();
+                        });
+                        builder1.setNegativeButton(LocaleController.getString("Cancel", R.string.Cancel), null);
+                        showDialog(builder1.create());
+                        break;
+                    }
+                }
+                builder.getDismissRunnable().run();
+            });
+        }
+        builder.setCustomView(linearLayout);
+        showDialog(builder.create());
+    }
+
+    private void sendLogs() {
+        if (getParentActivity() == null) {
+            return;
+        }
+        AlertDialog progressDialog = new AlertDialog(getParentActivity(), 3);
+        progressDialog.setCanCacnel(false);
+        progressDialog.show();
+        Utilities.globalQueue.postRunnable(() -> {
+            try {
+                File sdCard = ApplicationLoader.applicationContext.getExternalFilesDir(null);
+                File dir = new File(sdCard.getAbsolutePath() + "/logs");
+
+                File zipFile = new File(dir, "logs.zip");
+                if (zipFile.exists()) {
+                    zipFile.delete();
+                }
+
+                File[] files = dir.listFiles();
+
+                boolean[] finished = new boolean[1];
+
+                BufferedInputStream origin = null;
+                ZipOutputStream out = null;
+                try {
+                    FileOutputStream dest = new FileOutputStream(zipFile);
+                    out = new ZipOutputStream(new BufferedOutputStream(dest));
+                    byte[] data = new byte[1024 * 64];
+
+                    for (int i = 0; i < files.length; i++) {
+                        FileInputStream fi = new FileInputStream(files[i]);
+                        origin = new BufferedInputStream(fi, data.length);
+
+                        ZipEntry entry = new ZipEntry(files[i].getName());
+                        out.putNextEntry(entry);
+                        int count;
+                        while ((count = origin.read(data, 0, data.length)) != -1) {
+                            out.write(data, 0, count);
+                        }
+                        if (origin != null) {
+                            origin.close();
+                            origin = null;
+                        }
+                    }
+                    finished[0] = true;
+                } catch (Exception e) {
+                    e.printStackTrace();
+                } finally {
+                    if (origin != null) {
+                        origin.close();
+                    }
+                    if (out != null) {
+                        out.close();
+                    }
+                }
+
+                AndroidUtilities.runOnUIThread(() -> {
+                    try {
+                        progressDialog.dismiss();
+                    } catch (Exception ignore) {
+
+                    }
+                    if (finished[0]) {
+                        Uri uri;
+                        if (Build.VERSION.SDK_INT >= 24) {
+                            uri = FileProvider.getUriForFile(getParentActivity(), BuildConfig.APPLICATION_ID + ".provider", zipFile);
+                        } else {
+                            uri = Uri.fromFile(zipFile);
+                        }
+
+                        Intent i = new Intent(Intent.ACTION_SEND);
+                        if (Build.VERSION.SDK_INT >= 24) {
+                            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        }
+                        i.setType("message/rfc822");
+                        i.putExtra(Intent.EXTRA_EMAIL, "");
+                        i.putExtra(Intent.EXTRA_SUBJECT, "Logs from " + LocaleController.getInstance().formatterStats.format(System.currentTimeMillis()));
+                        i.putExtra(Intent.EXTRA_STREAM, uri);
+                        getParentActivity().startActivityForResult(Intent.createChooser(i, "Select email application."), 500);
+                    } else {
+                        Toast.makeText(getParentActivity(), LocaleController.getString("ErrorOccurred", R.string.ErrorOccurred), Toast.LENGTH_SHORT).show();
+                    }
+                });
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+    }
+
+    private class SearchAdapter extends RecyclerListView.SelectionAdapter {
+
+        private class SearchResult {
+
+            private String searchTitle;
+            private Runnable openRunnable;
+            private String rowName;
+            private String[] path;
+            private int iconResId;
+            private int guid;
+            private int num;
+
+            public SearchResult(int g, String search, int icon, Runnable open) {
+                this(g, search, null, null, null, icon, open);
+            }
+
+            public SearchResult(int g, String search, String pathArg1, int icon, Runnable open) {
+                this(g, search, null, pathArg1, null, icon, open);
+            }
+
+            public SearchResult(int g, String search, String row, String pathArg1, int icon, Runnable open) {
+                this(g, search, row, pathArg1, null, icon, open);
+            }
+
+            public SearchResult(int g, String search, String row, String pathArg1, String pathArg2, int icon, Runnable open) {
+                guid = g;
+                searchTitle = search;
+                rowName = row;
+                openRunnable = open;
+                iconResId = icon;
+                if (pathArg1 != null && pathArg2 != null) {
+                    path = new String[]{pathArg1, pathArg2};
+                } else if (pathArg1 != null) {
+                    path = new String[]{pathArg1};
+                }
+            }
+
+            @Override
+            public boolean equals(Object obj) {
+                if (!(obj instanceof SearchResult)) {
+                    return false;
+                }
+                SearchResult result = (SearchResult) obj;
+                return guid == result.guid;
+            }
+
+            @Override
+            public String toString() {
+                SerializedData data = new SerializedData();
+                data.writeInt32(num);
+                data.writeInt32(1);
+                data.writeInt32(guid);
+                return Utilities.bytesToHex(data.toByteArray());
+            }
+
+            private void open() {
+                openRunnable.run();
+                if (rowName != null) {
+
+                    BaseFragment openingFragment = parentLayout.fragmentsStack.get(parentLayout.fragmentsStack.size() - 1);
+                    try {
+                        Field listViewField = openingFragment.getClass().getDeclaredField("listView");
+                        listViewField.setAccessible(true);
+                        RecyclerListView.IntReturnCallback callback = () -> {
+                            int position = -1;
+                            try {
+                                Field rowField = openingFragment.getClass().getDeclaredField(rowName);
+                                Field linearLayoutField = openingFragment.getClass().getDeclaredField("layoutManager");
+                                rowField.setAccessible(true);
+                                linearLayoutField.setAccessible(true);
+                                LinearLayoutManager layoutManager = (LinearLayoutManager) linearLayoutField.get(openingFragment);
+                                position = rowField.getInt(openingFragment);
+                                layoutManager.scrollToPositionWithOffset(position, 0);
+                                rowField.setAccessible(false);
+                                linearLayoutField.setAccessible(false);
+                                return position;
+                            } catch (Throwable ignore) {
+
+                            }
+                            return position;
+                        };
+                        RecyclerListView listView = (RecyclerListView) listViewField.get(openingFragment);
+                        listView.highlightRow(callback);
+                        listViewField.setAccessible(false);
+                    } catch (Throwable ignore) {
+
+                    }
+                }
+            }
+        }
+
+        private class FaqSearchResult {
+
+            private String title;
+            private String[] path;
+            private String url;
+            private int num;
+
+            public FaqSearchResult(String t, String[] p, String u) {
+                title = t;
+                path = p;
+                url = u;
+            }
+
+            @Override
+            public boolean equals(Object obj) {
+                if (!(obj instanceof FaqSearchResult)) {
+                    return false;
+                }
+                FaqSearchResult result = (FaqSearchResult) obj;
+                return title.equals(result.title);
+            }
+
+            @Override
+            public String toString() {
+                SerializedData data = new SerializedData();
+                data.writeInt32(num);
+                data.writeInt32(0);
+                data.writeString(title);
+                data.writeInt32(path != null ? path.length : 0);
+                if (path != null) {
+                    for (int a = 0; a < path.length; a++) {
+                        data.writeString(path[a]);
+                    }
+                }
+                data.writeString(url);
+                return Utilities.bytesToHex(data.toByteArray());
+            }
+        }
+
+        private SearchResult[] searchArray = new SearchResult[]{
+                new SearchResult(500, LocaleController.getString("EditName", R.string.EditName), 0, () -> presentFragment(new ChangeNameActivity())),
+                new SearchResult(501, LocaleController.getString("ChangePhoneNumber", R.string.ChangePhoneNumber), 0, () -> presentFragment(new ActionIntroActivity(ActionIntroActivity.ACTION_TYPE_CHANGE_PHONE_NUMBER))),
+                new SearchResult(502, LocaleController.getString("AddAnotherAccount", R.string.AddAnotherAccount), 0, () -> {
+                    int freeAccount = -1;
+                    for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+                        if (!UserConfig.getInstance(a).isClientActivated()) {
+                            freeAccount = a;
+                            break;
+                        }
+                    }
+                    if (freeAccount >= 0) {
+                        presentFragment(new LoginActivity(freeAccount));
+                    }
+                }),
+                new SearchResult(503, LocaleController.getString("UserBio", R.string.UserBio), 0, () -> {
+                    if (userInfo != null) {
+                        presentFragment(new ChangeBioActivity());
+                    }
+                }),
+
+                new SearchResult(1, LocaleController.getString("NotificationsAndSounds", R.string.NotificationsAndSounds), R.drawable.menu_notifications, () -> presentFragment(new NotificationsSettingsActivity())),
+                new SearchResult(2, LocaleController.getString("NotificationsPrivateChats", R.string.NotificationsPrivateChats), LocaleController.getString("NotificationsAndSounds", R.string.NotificationsAndSounds), R.drawable.menu_notifications, () -> presentFragment(new NotificationsCustomSettingsActivity(NotificationsController.TYPE_PRIVATE, new ArrayList<>(), true))),
+                new SearchResult(3, LocaleController.getString("NotificationsGroups", R.string.NotificationsGroups), LocaleController.getString("NotificationsAndSounds", R.string.NotificationsAndSounds), R.drawable.menu_notifications, () -> presentFragment(new NotificationsCustomSettingsActivity(NotificationsController.TYPE_GROUP, new ArrayList<>(), true))),
+                new SearchResult(4, LocaleController.getString("NotificationsChannels", R.string.NotificationsChannels), LocaleController.getString("NotificationsAndSounds", R.string.NotificationsAndSounds), R.drawable.menu_notifications, () -> presentFragment(new NotificationsCustomSettingsActivity(NotificationsController.TYPE_CHANNEL, new ArrayList<>(), true))),
+                new SearchResult(5, LocaleController.getString("VoipNotificationSettings", R.string.VoipNotificationSettings), "callsSectionRow", LocaleController.getString("NotificationsAndSounds", R.string.NotificationsAndSounds), R.drawable.menu_notifications, () -> presentFragment(new NotificationsSettingsActivity())),
+                new SearchResult(6, LocaleController.getString("BadgeNumber", R.string.BadgeNumber), "badgeNumberSection", LocaleController.getString("NotificationsAndSounds", R.string.NotificationsAndSounds), R.drawable.menu_notifications, () -> presentFragment(new NotificationsSettingsActivity())),
+                new SearchResult(7, LocaleController.getString("InAppNotifications", R.string.InAppNotifications), "inappSectionRow", LocaleController.getString("NotificationsAndSounds", R.string.NotificationsAndSounds), R.drawable.menu_notifications, () -> presentFragment(new NotificationsSettingsActivity())),
+                new SearchResult(8, LocaleController.getString("ContactJoined", R.string.ContactJoined), "contactJoinedRow", LocaleController.getString("NotificationsAndSounds", R.string.NotificationsAndSounds), R.drawable.menu_notifications, () -> presentFragment(new NotificationsSettingsActivity())),
+                new SearchResult(9, LocaleController.getString("PinnedMessages", R.string.PinnedMessages), "pinnedMessageRow", LocaleController.getString("NotificationsAndSounds", R.string.NotificationsAndSounds), R.drawable.menu_notifications, () -> presentFragment(new NotificationsSettingsActivity())),
+                new SearchResult(10, LocaleController.getString("ResetAllNotifications", R.string.ResetAllNotifications), "resetNotificationsRow", LocaleController.getString("NotificationsAndSounds", R.string.NotificationsAndSounds), R.drawable.menu_notifications, () -> presentFragment(new NotificationsSettingsActivity())),
+
+                new SearchResult(100, LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacySettingsActivity())),
+                new SearchResult(101, LocaleController.getString("BlockedUsers", R.string.BlockedUsers), LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacyUsersActivity())),
+                new SearchResult(105, LocaleController.getString("PrivacyPhone", R.string.PrivacyPhone), LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacyControlActivity(ContactsController.PRIVACY_RULES_TYPE_PHONE, true))),
+                new SearchResult(102, LocaleController.getString("PrivacyLastSeen", R.string.PrivacyLastSeen), LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacyControlActivity(ContactsController.PRIVACY_RULES_TYPE_LASTSEEN, true))),
+                new SearchResult(103, LocaleController.getString("PrivacyProfilePhoto", R.string.PrivacyProfilePhoto), LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacyControlActivity(ContactsController.PRIVACY_RULES_TYPE_PHOTO, true))),
+                new SearchResult(104, LocaleController.getString("PrivacyForwards", R.string.PrivacyForwards), LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacyControlActivity(ContactsController.PRIVACY_RULES_TYPE_FORWARDS, true))),
+                new SearchResult(105, LocaleController.getString("PrivacyP2P", R.string.PrivacyP2P), LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacyControlActivity(ContactsController.PRIVACY_RULES_TYPE_P2P, true))),
+                new SearchResult(106, LocaleController.getString("Calls", R.string.Calls), LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacyControlActivity(ContactsController.PRIVACY_RULES_TYPE_CALLS, true))),
+                new SearchResult(107, LocaleController.getString("GroupsAndChannels", R.string.GroupsAndChannels), LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacyControlActivity(ContactsController.PRIVACY_RULES_TYPE_INVITE, true))),
+                new SearchResult(108, LocaleController.getString("Passcode", R.string.Passcode), LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PasscodeActivity(SharedConfig.passcodeHash.length() > 0 ? 2 : 0))),
+                new SearchResult(109, LocaleController.getString("TwoStepVerification", R.string.TwoStepVerification), LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new TwoStepVerificationActivity(0))),
+                new SearchResult(110, LocaleController.getString("SessionsTitle", R.string.SessionsTitle), LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new SessionsActivity(0))),
+                new SearchResult(111, LocaleController.getString("PrivacyDeleteCloudDrafts", R.string.PrivacyDeleteCloudDrafts), "clearDraftsRow", LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacySettingsActivity())),
+                new SearchResult(112, LocaleController.getString("DeleteAccountIfAwayFor2", R.string.DeleteAccountIfAwayFor2), "deleteAccountRow", LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacySettingsActivity())),
+                new SearchResult(113, LocaleController.getString("PrivacyPaymentsClear", R.string.PrivacyPaymentsClear), "paymentsClearRow", LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacySettingsActivity())),
+                new SearchResult(114, LocaleController.getString("WebSessionsTitle", R.string.WebSessionsTitle), LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new SessionsActivity(1))),
+                new SearchResult(115, LocaleController.getString("SyncContactsDelete", R.string.SyncContactsDelete), "contactsDeleteRow", LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacySettingsActivity())),
+                new SearchResult(116, LocaleController.getString("SyncContacts", R.string.SyncContacts), "contactsSyncRow", LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacySettingsActivity())),
+                new SearchResult(117, LocaleController.getString("SuggestContacts", R.string.SuggestContacts), "contactsSuggestRow", LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacySettingsActivity())),
+                new SearchResult(118, LocaleController.getString("MapPreviewProvider", R.string.MapPreviewProvider), "secretMapRow", LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacySettingsActivity())),
+                new SearchResult(119, LocaleController.getString("SecretWebPage", R.string.SecretWebPage), "secretWebpageRow", LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, () -> presentFragment(new PrivacySettingsActivity())),
+
+                new SearchResult(200, LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataSettingsActivity())),
+                new SearchResult(201, LocaleController.getString("DataUsage", R.string.DataUsage), "usageSectionRow", LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataSettingsActivity())),
+                new SearchResult(202, LocaleController.getString("StorageUsage", R.string.StorageUsage), LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new CacheControlActivity())),
+                new SearchResult(203, LocaleController.getString("KeepMedia", R.string.KeepMedia), "keepMediaRow", LocaleController.getString("DataSettings", R.string.DataSettings), LocaleController.getString("StorageUsage", R.string.StorageUsage), R.drawable.menu_data, () -> presentFragment(new CacheControlActivity())),
+                new SearchResult(204, LocaleController.getString("ClearMediaCache", R.string.ClearMediaCache), "cacheRow", LocaleController.getString("DataSettings", R.string.DataSettings), LocaleController.getString("StorageUsage", R.string.StorageUsage), R.drawable.menu_data, () -> presentFragment(new CacheControlActivity())),
+                new SearchResult(205, LocaleController.getString("LocalDatabase", R.string.LocalDatabase), "databaseRow", LocaleController.getString("DataSettings", R.string.DataSettings), LocaleController.getString("StorageUsage", R.string.StorageUsage), R.drawable.menu_data, () -> presentFragment(new CacheControlActivity())),
+                new SearchResult(206, LocaleController.getString("NetworkUsage", R.string.NetworkUsage), LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataUsageActivity())),
+                new SearchResult(207, LocaleController.getString("AutomaticMediaDownload", R.string.AutomaticMediaDownload), "mediaDownloadSectionRow", LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataSettingsActivity())),
+                new SearchResult(208, LocaleController.getString("WhenUsingMobileData", R.string.WhenUsingMobileData), LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataAutoDownloadActivity(0))),
+                new SearchResult(209, LocaleController.getString("WhenConnectedOnWiFi", R.string.WhenConnectedOnWiFi), LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataAutoDownloadActivity(1))),
+                new SearchResult(210, LocaleController.getString("WhenRoaming", R.string.WhenRoaming), LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataAutoDownloadActivity(2))),
+                new SearchResult(211, LocaleController.getString("ResetAutomaticMediaDownload", R.string.ResetAutomaticMediaDownload), "resetDownloadRow", LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataSettingsActivity())),
+                new SearchResult(212, LocaleController.getString("AutoplayMedia", R.string.AutoplayMedia), "autoplayHeaderRow", LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataSettingsActivity())),
+                new SearchResult(213, LocaleController.getString("AutoplayGIF", R.string.AutoplayGIF), "autoplayGifsRow", LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataSettingsActivity())),
+                new SearchResult(214, LocaleController.getString("AutoplayVideo", R.string.AutoplayVideo), "autoplayVideoRow", LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataSettingsActivity())),
+                new SearchResult(215, LocaleController.getString("Streaming", R.string.Streaming), "streamSectionRow", LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataSettingsActivity())),
+                new SearchResult(216, LocaleController.getString("EnableStreaming", R.string.EnableStreaming), "enableStreamRow", LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataSettingsActivity())),
+                new SearchResult(217, LocaleController.getString("Calls", R.string.Calls), "callsSectionRow", LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataSettingsActivity())),
+                new SearchResult(218, LocaleController.getString("VoipUseLessData", R.string.VoipUseLessData), "useLessDataForCallsRow", LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataSettingsActivity())),
+                new SearchResult(219, LocaleController.getString("VoipQuickReplies", R.string.VoipQuickReplies), "quickRepliesRow", LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new DataSettingsActivity())),
+                new SearchResult(220, LocaleController.getString("ProxySettings", R.string.ProxySettings), LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, () -> presentFragment(new ProxyListActivity())),
+                new SearchResult(221, LocaleController.getString("UseProxyForCalls", R.string.UseProxyForCalls), "callsRow", LocaleController.getString("DataSettings", R.string.DataSettings), LocaleController.getString("ProxySettings", R.string.ProxySettings), R.drawable.menu_data, () -> presentFragment(new ProxyListActivity())),
+
+                new SearchResult(300, LocaleController.getString("ChatSettings", R.string.ChatSettings), R.drawable.menu_chats, () -> presentFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_BASIC))),
+                new SearchResult(301, LocaleController.getString("TextSizeHeader", R.string.TextSizeHeader), "textSizeHeaderRow", LocaleController.getString("ChatSettings", R.string.ChatSettings), R.drawable.menu_chats, () -> presentFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_BASIC))),
+                new SearchResult(302, LocaleController.getString("ChatBackground", R.string.ChatBackground), LocaleController.getString("ChatSettings", R.string.ChatSettings), R.drawable.menu_chats, () -> presentFragment(new WallpapersListActivity(WallpapersListActivity.TYPE_ALL))),
+                new SearchResult(303, LocaleController.getString("SetColor", R.string.SetColor), null, LocaleController.getString("ChatSettings", R.string.ChatSettings), LocaleController.getString("ChatBackground", R.string.ChatBackground), R.drawable.menu_chats, () -> presentFragment(new WallpapersListActivity(WallpapersListActivity.TYPE_COLOR))),
+                new SearchResult(304, LocaleController.getString("ResetChatBackgrounds", R.string.ResetChatBackgrounds), "resetRow", LocaleController.getString("ChatSettings", R.string.ChatSettings), LocaleController.getString("ChatBackground", R.string.ChatBackground), R.drawable.menu_chats, () -> presentFragment(new WallpapersListActivity(WallpapersListActivity.TYPE_ALL))),
+                new SearchResult(305, LocaleController.getString("AutoNightTheme", R.string.AutoNightTheme), LocaleController.getString("ChatSettings", R.string.ChatSettings), R.drawable.menu_chats, () -> presentFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_NIGHT))),
+                new SearchResult(306, LocaleController.getString("ColorTheme", R.string.ColorTheme), "themeHeaderRow", LocaleController.getString("ChatSettings", R.string.ChatSettings), R.drawable.menu_chats, () -> presentFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_BASIC))),
+                new SearchResult(307, LocaleController.getString("ChromeCustomTabs", R.string.ChromeCustomTabs), "customTabsRow", LocaleController.getString("ChatSettings", R.string.ChatSettings), R.drawable.menu_chats, () -> presentFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_BASIC))),
+                new SearchResult(308, LocaleController.getString("DirectShare", R.string.DirectShare), "directShareRow", LocaleController.getString("ChatSettings", R.string.ChatSettings), R.drawable.menu_chats, () -> presentFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_BASIC))),
+                new SearchResult(309, LocaleController.getString("EnableAnimations", R.string.EnableAnimations), "enableAnimationsRow", LocaleController.getString("ChatSettings", R.string.ChatSettings), R.drawable.menu_chats, () -> presentFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_BASIC))),
+                new SearchResult(310, LocaleController.getString("RaiseToSpeak", R.string.RaiseToSpeak), "raiseToSpeakRow", LocaleController.getString("ChatSettings", R.string.ChatSettings), R.drawable.menu_chats, () -> presentFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_BASIC))),
+                new SearchResult(311, LocaleController.getString("SendByEnter", R.string.SendByEnter), "sendByEnterRow", LocaleController.getString("ChatSettings", R.string.ChatSettings), R.drawable.menu_chats, () -> presentFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_BASIC))),
+                new SearchResult(312, LocaleController.getString("SaveToGallerySettings", R.string.SaveToGallerySettings), "saveToGalleryRow", LocaleController.getString("ChatSettings", R.string.ChatSettings), R.drawable.menu_chats, () -> presentFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_BASIC))),
+                new SearchResult(312, LocaleController.getString("DistanceUnits", R.string.DistanceUnits), "distanceRow", LocaleController.getString("ChatSettings", R.string.ChatSettings), R.drawable.menu_chats, () -> presentFragment(new ThemeActivity(ThemeActivity.THEME_TYPE_BASIC))),
+                new SearchResult(313, LocaleController.getString("StickersAndMasks", R.string.StickersAndMasks), LocaleController.getString("ChatSettings", R.string.ChatSettings), R.drawable.menu_chats, () -> presentFragment(new StickersActivity(MediaDataController.TYPE_IMAGE))),
+                new SearchResult(314, LocaleController.getString("SuggestStickers", R.string.SuggestStickers), "suggestRow", LocaleController.getString("ChatSettings", R.string.ChatSettings), LocaleController.getString("StickersAndMasks", R.string.StickersAndMasks), R.drawable.menu_chats, () -> presentFragment(new StickersActivity(MediaDataController.TYPE_IMAGE))),
+                new SearchResult(315, LocaleController.getString("FeaturedStickers", R.string.FeaturedStickers), null, LocaleController.getString("ChatSettings", R.string.ChatSettings), LocaleController.getString("StickersAndMasks", R.string.StickersAndMasks), R.drawable.menu_chats, () -> presentFragment(new FeaturedStickersActivity())),
+                new SearchResult(316, LocaleController.getString("Masks", R.string.Masks), null, LocaleController.getString("ChatSettings", R.string.ChatSettings), LocaleController.getString("StickersAndMasks", R.string.StickersAndMasks), R.drawable.menu_chats, () -> presentFragment(new StickersActivity(MediaDataController.TYPE_MASK))),
+                new SearchResult(317, LocaleController.getString("ArchivedStickers", R.string.ArchivedStickers), null, LocaleController.getString("ChatSettings", R.string.ChatSettings), LocaleController.getString("StickersAndMasks", R.string.StickersAndMasks), R.drawable.menu_chats, () -> presentFragment(new ArchivedStickersActivity(MediaDataController.TYPE_IMAGE))),
+                new SearchResult(317, LocaleController.getString("ArchivedMasks", R.string.ArchivedMasks), null, LocaleController.getString("ChatSettings", R.string.ChatSettings), LocaleController.getString("StickersAndMasks", R.string.StickersAndMasks), R.drawable.menu_chats, () -> presentFragment(new ArchivedStickersActivity(MediaDataController.TYPE_MASK))),
+
+                new SearchResult(400, LocaleController.getString("Language", R.string.Language), R.drawable.menu_language, () -> presentFragment(new LanguageSelectActivity())),
+
+                new SearchResult(401, LocaleController.getString("SettingsHelp", R.string.SettingsHelp), R.drawable.menu_help, SettingsActivity.this::showHelpAlert),
+                new SearchResult(402, LocaleController.getString("AskAQuestion", R.string.AskAQuestion), LocaleController.getString("SettingsHelp", R.string.SettingsHelp), R.drawable.menu_help, () -> showDialog(AlertsCreator.createSupportAlert(SettingsActivity.this))),
+                new SearchResult(403, LocaleController.getString("TelegramFAQ", R.string.TelegramFAQ), LocaleController.getString("SettingsHelp", R.string.SettingsHelp), R.drawable.menu_help, () -> Browser.openUrl(getParentActivity(), LocaleController.getString("TelegramFaqUrl", R.string.TelegramFaqUrl))),
+                new SearchResult(404, LocaleController.getString("PrivacyPolicy", R.string.PrivacyPolicy), LocaleController.getString("SettingsHelp", R.string.SettingsHelp), R.drawable.menu_help, () -> Browser.openUrl(getParentActivity(), LocaleController.getString("PrivacyPolicyUrl", R.string.PrivacyPolicyUrl))),
+        };
+        private ArrayList<FaqSearchResult> faqSearchArray = new ArrayList<>();
+
+        private Context mContext;
+        private ArrayList<CharSequence> resultNames = new ArrayList<>();
+        private ArrayList<SearchResult> searchResults = new ArrayList<>();
+        private ArrayList<FaqSearchResult> faqSearchResults = new ArrayList<>();
+        private ArrayList<Object> recentSearches = new ArrayList<>();
+        private boolean searchWas;
+        private Runnable searchRunnable;
+        private String lastSearchString;
+        private TLRPC.WebPage faqWebPage;
+        private boolean loadingFaqPage;
+
+        public SearchAdapter(Context context) {
+            mContext = context;
+
+            HashMap<Integer, SearchResult> resultHashMap = new HashMap<>();
+            for (int a = 0; a < searchArray.length; a++) {
+                resultHashMap.put(searchArray[a].guid, searchArray[a]);
+            }
+            Set<String> set = MessagesController.getGlobalMainSettings().getStringSet("settingsSearchRecent2", null);
+            if (set != null) {
+                for (String value : set) {
+                    try {
+                        SerializedData data = new SerializedData(Utilities.hexToBytes(value));
+                        int num = data.readInt32(false);
+                        int type = data.readInt32(false);
+                        if (type == 0) {
+                            String title = data.readString(false);
+                            int count = data.readInt32(false);
+                            String[] path = null;
+                            if (count > 0) {
+                                path = new String[count];
+                                for (int a = 0; a < count; a++) {
+                                    path[a] = data.readString(false);
+                                }
+                            }
+                            String url = data.readString(false);
+                            FaqSearchResult result = new FaqSearchResult(title, path, url);
+                            result.num = num;
+                            recentSearches.add(result);
+                        } else if (type == 1) {
+                            SearchResult result = resultHashMap.get(data.readInt32(false));
+                            if (result != null) {
+                                result.num = num;
+                                recentSearches.add(result);
+                            }
+                        }
+                    } catch (Exception ignore) {
+
+                    }
+                }
+            }
+            Collections.sort(recentSearches, (o1, o2) -> {
+                int n1 = getNum(o1);
+                int n2 = getNum(o2);
+                if (n1 < n2) {
+                    return -1;
+                } else if (n1 > n2) {
+                    return 1;
+                }
+                return 0;
+            });
+        }
+
+        private void loadFaqWebPage() {
+            if (faqWebPage != null || loadingFaqPage) {
+                return;
+            }
+            loadingFaqPage = true;
+            final TLRPC.TL_messages_getWebPage req2 = new TLRPC.TL_messages_getWebPage();
+            req2.url = LocaleController.getString("TelegramFaqUrl", R.string.TelegramFaqUrl);
+            req2.hash = 0;
+            ConnectionsManager.getInstance(currentAccount).sendRequest(req2, (response2, error2) -> {
+                if (response2 instanceof TLRPC.WebPage) {
+                    TLRPC.WebPage page = (TLRPC.WebPage) response2;
+                    if (page.cached_page != null) {
+                        for (int a = 0, N = page.cached_page.blocks.size(); a < N; a++) {
+                            TLRPC.PageBlock block = page.cached_page.blocks.get(a);
+                            if (block instanceof TLRPC.TL_pageBlockList) {
+                                String paragraph = null;
+                                if (a != 0) {
+                                    TLRPC.PageBlock prevBlock = page.cached_page.blocks.get(a - 1);
+                                    if (prevBlock instanceof TLRPC.TL_pageBlockParagraph) {
+                                        TLRPC.TL_pageBlockParagraph pageBlockParagraph = (TLRPC.TL_pageBlockParagraph) prevBlock;
+                                        paragraph = ArticleViewer.getPlainText(pageBlockParagraph.text).toString();
+                                    }
+                                }
+                                TLRPC.TL_pageBlockList list = (TLRPC.TL_pageBlockList) block;
+                                for (int b = 0, N2 = list.items.size(); b < N2; b++) {
+                                    TLRPC.PageListItem item = list.items.get(b);
+                                    if (item instanceof TLRPC.TL_pageListItemText) {
+                                        TLRPC.TL_pageListItemText itemText = (TLRPC.TL_pageListItemText) item;
+                                        String url = ArticleViewer.getUrl(itemText.text);
+                                        String text = ArticleViewer.getPlainText(itemText.text).toString();
+                                        if (TextUtils.isEmpty(url) || TextUtils.isEmpty(text)) {
+                                            continue;
+                                        }
+                                        String[] path;
+                                        if (paragraph != null) {
+                                            path = new String[]{LocaleController.getString("SettingsSearchFaq", R.string.SettingsSearchFaq), paragraph};
+                                        } else {
+                                            path = new String[]{LocaleController.getString("SettingsSearchFaq", R.string.SettingsSearchFaq)};
+                                        }
+                                        faqSearchArray.add(new FaqSearchResult(text, path, url));
+                                    }
+                                }
+                            } else if (block instanceof TLRPC.TL_pageBlockAnchor) {
+                                break;
+                            }
+                        }
+                        faqWebPage = page;
+                    }
+                }
+                loadingFaqPage = false;
+            });
+        }
+
+        @Override
+        public int getItemCount() {
+            if (searchWas) {
+                return searchResults.size() + (faqSearchResults.isEmpty() ? 0 : 1 + faqSearchResults.size());
+            }
+            return (recentSearches.isEmpty() ? 0 : recentSearches.size() + 1);
+        }
+
+        @Override
+        public boolean isEnabled(RecyclerView.ViewHolder holder) {
+            return holder.getItemViewType() == 0;
+        }
+
+        @Override
+        public void onBindViewHolder(RecyclerView.ViewHolder holder, int position) {
+            switch (holder.getItemViewType()) {
+                case 0: {
+                    SettingsSearchCell searchCell = (SettingsSearchCell) holder.itemView;
+                    if (searchWas) {
+                        if (position < searchResults.size()) {
+                            SearchResult result = searchResults.get(position);
+                            SearchResult prevResult = position > 0 ? searchResults.get(position - 1) : null;
+                            int icon;
+                            if (prevResult != null && prevResult.iconResId == result.iconResId) {
+                                icon = 0;
+                            } else {
+                                icon = result.iconResId;
+                            }
+                            searchCell.setTextAndValueAndIcon(resultNames.get(position), result.path, icon, position < searchResults.size() - 1);
+                        } else {
+                            position -= searchResults.size() + 1;
+                            FaqSearchResult result = faqSearchResults.get(position);
+                            searchCell.setTextAndValue(resultNames.get(position + searchResults.size()), result.path, true, position < searchResults.size() - 1);
+                        }
+                    } else {
+                        position--;
+                        Object object = recentSearches.get(position);
+                        if (object instanceof SearchResult) {
+                            SearchResult result = (SearchResult) object;
+                            searchCell.setTextAndValue(result.searchTitle, result.path, false, position < recentSearches.size() - 1);
+                        } else if (object instanceof FaqSearchResult) {
+                            FaqSearchResult result = (FaqSearchResult) object;
+                            searchCell.setTextAndValue(result.title, result.path, true, position < recentSearches.size() - 1);
+                        }
+                    }
+                    break;
+                }
+                case 1: {
+                    GraySectionCell sectionCell = (GraySectionCell) holder.itemView;
+                    sectionCell.setText(LocaleController.getString("SettingsFaqSearchTitle", R.string.SettingsFaqSearchTitle));
+                    break;
+                }
+                case 2: {
+                    HeaderCell headerCell = (HeaderCell) holder.itemView;
+                    headerCell.setText(LocaleController.getString("SettingsRecent", R.string.SettingsRecent));
+                    break;
+                }
+            }
+        }
+
+        @Override
+        public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+            View view;
+            switch (viewType) {
+                case 0:
+                    view = new SettingsSearchCell(mContext);
+                    break;
+                case 1:
+                    view = new GraySectionCell(mContext);
+                    break;
+                case 2:
+                default:
+                    view = new HeaderCell(mContext, 16);
+                    break;
+            }
+            view.setLayoutParams(new RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT));
+            return new RecyclerListView.Holder(view);
+        }
+
+        @Override
+        public int getItemViewType(int position) {
+            if (searchWas) {
+                if (position < searchResults.size()) {
+                    return 0;
+                } else if (position == searchResults.size()) {
+                    return 1;
+                }
+                return 0;
+            } else {
+                if (position == 0) {
+                    return 2;
+                }
+                return 0;
+            }
+        }
+
+        public void addRecent(Object object) {
+            int index = recentSearches.indexOf(object);
+            if (index >= 0) {
+                recentSearches.remove(index);
+            }
+            recentSearches.add(0, object);
+            if (!searchWas) {
+                notifyDataSetChanged();
+            }
+            if (recentSearches.size() > 20) {
+                recentSearches.remove(recentSearches.size() - 1);
+            }
+            LinkedHashSet<String> toSave = new LinkedHashSet<>();
+            for (int a = 0, N = recentSearches.size(); a < N; a++) {
+                Object o = recentSearches.get(a);
+                if (o instanceof SearchResult) {
+                    ((SearchResult) o).num = a;
+                } else if (o instanceof FaqSearchResult) {
+                    ((FaqSearchResult) o).num = a;
+                }
+                toSave.add(o.toString());
+            }
+            MessagesController.getGlobalMainSettings().edit().putStringSet("settingsSearchRecent2", toSave).commit();
+        }
+
+        public void clearRecent() {
+            recentSearches.clear();
+            MessagesController.getGlobalMainSettings().edit().remove("settingsSearchRecent2").commit();
+            notifyDataSetChanged();
+        }
+
+        private int getNum(Object o) {
+            if (o instanceof SearchResult) {
+                return ((SearchResult) o).num;
+            } else if (o instanceof FaqSearchResult) {
+                return ((FaqSearchResult) o).num;
+            }
+            return 0;
+        }
+
+        public void search(String text) {
+            lastSearchString = text;
+            if (searchRunnable != null) {
+                Utilities.searchQueue.cancelRunnable(searchRunnable);
+                searchRunnable = null;
+            }
+            if (TextUtils.isEmpty(text)) {
+                searchWas = false;
+                searchResults.clear();
+                faqSearchResults.clear();
+                resultNames.clear();
+                emptyView.setTopImage(0);
+                emptyView.setText(LocaleController.getString("SettingsNoRecent", R.string.SettingsNoRecent));
+                notifyDataSetChanged();
+                return;
+            }
+            Utilities.searchQueue.postRunnable(searchRunnable = () -> {
+                ArrayList<SearchResult> results = new ArrayList<>();
+                ArrayList<FaqSearchResult> faqResults = new ArrayList<>();
+                ArrayList<CharSequence> names = new ArrayList<>();
+                String[] searchArgs = text.split(" ");
+                String[] translitArgs = new String[searchArgs.length];
+                for (int a = 0; a < searchArgs.length; a++) {
+                    translitArgs[a] = LocaleController.getInstance().getTranslitString(searchArgs[a]);
+                    if (translitArgs[a].equals(searchArgs[a])) {
+                        translitArgs[a] = null;
+                    }
+                }
+
+                for (int a = 0; a < searchArray.length; a++) {
+                    SearchResult result = searchArray[a];
+                    String title = " " + result.searchTitle.toLowerCase();
+                    SpannableStringBuilder stringBuilder = null;
+                    for (int i = 0; i < searchArgs.length; i++) {
+                        if (searchArgs[i].length() != 0) {
+                            String searchString = searchArgs[i];
+                            int index = title.indexOf(" " + searchString);
+                            if (index < 0 && translitArgs[i] != null) {
+                                searchString = translitArgs[i];
+                                index = title.indexOf(" " + searchString);
+                            }
+                            if (index >= 0) {
+                                if (stringBuilder == null) {
+                                    stringBuilder = new SpannableStringBuilder(result.searchTitle);
+                                }
+                                stringBuilder.setSpan(new ForegroundColorSpan(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4)), index, index + searchString.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                            } else {
+                                break;
+                            }
+                        }
+                        if (stringBuilder != null && i == searchArgs.length - 1) {
+                            if (result.guid == 502) {
+                                int freeAccount = -1;
+                                for (int b = 0; b < UserConfig.MAX_ACCOUNT_COUNT; b++) {
+                                    if (!UserConfig.getInstance(a).isClientActivated()) {
+                                        freeAccount = b;
+                                        break;
+                                    }
+                                }
+                                if (freeAccount < 0) {
+                                    continue;
+                                }
+                            }
+                            results.add(result);
+                            names.add(stringBuilder);
+                        }
+                    }
+                }
+                if (faqWebPage != null) {
+                    for (int a = 0, N = faqSearchArray.size(); a < N; a++) {
+                        FaqSearchResult result = faqSearchArray.get(a);
+                        String title = " " + result.title.toLowerCase();
+                        SpannableStringBuilder stringBuilder = null;
+                        for (int i = 0; i < searchArgs.length; i++) {
+                            if (searchArgs[i].length() != 0) {
+                                String searchString = searchArgs[i];
+                                int index = title.indexOf(" " + searchString);
+                                if (index < 0 && translitArgs[i] != null) {
+                                    searchString = translitArgs[i];
+                                    index = title.indexOf(" " + searchString);
+                                }
+                                if (index >= 0) {
+                                    if (stringBuilder == null) {
+                                        stringBuilder = new SpannableStringBuilder(result.title);
+                                    }
+                                    stringBuilder.setSpan(new ForegroundColorSpan(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText4)), index, index + searchString.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                                } else {
+                                    break;
+                                }
+                            }
+                            if (stringBuilder != null && i == searchArgs.length - 1) {
+                                faqResults.add(result);
+                                names.add(stringBuilder);
+                            }
+                        }
+                    }
+                }
+
+                AndroidUtilities.runOnUIThread(() -> {
+                    if (!text.equals(lastSearchString)) {
+                        return;
+                    }
+                    if (!searchWas) {
+                        emptyView.setTopImage(R.drawable.settings_noresults);
+                        emptyView.setText(LocaleController.getString("SettingsNoResults", R.string.SettingsNoResults));
+                    }
+                    searchWas = true;
+                    searchResults = results;
+                    faqSearchResults = faqResults;
+                    resultNames = names;
+                    notifyDataSetChanged();
+                });
+            }, 300);
+        }
+    }
+
+    private class ListAdapter extends RecyclerListView.SelectionAdapter {
+
         private Context mContext;
 
         public ListAdapter(Context context) {
@@ -715,391 +1783,226 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         }
 
         @Override
-        public boolean areAllItemsEnabled() {
-            return false;
-        }
-
-        @Override
-        public boolean isEnabled(int i) {
-            return i == textSizeRow || i == enableAnimationsRow || i == blockedRow || i == notificationRow || i == backgroundRow ||
-                    i == askQuestionRow || i == sendLogsRow || i == sendByEnterRow || i == terminateSessionsRow || i == wifiDownloadRow ||
-                    i == mobileDownloadRow || i == clearLogsRow || i == roamingDownloadRow || i == languageRow ||
-                    i == switchBackendButtonRow || i == telegramFaqRow || i == contactsSortRow || i == contactsReimportRow || i == saveToGalleryRow;
-        }
-
-        @Override
-        public int getCount() {
+        public int getItemCount() {
             return rowCount;
         }
 
         @Override
-        public Object getItem(int i) {
-            return null;
+        public void onBindViewHolder(RecyclerView.ViewHolder holder, int position) {
+            switch (holder.getItemViewType()) {
+                case 0: {
+                    if (position == overscrollRow) {
+                        ((EmptyCell) holder.itemView).setHeight(AndroidUtilities.dp(88));
+                    }
+                    break;
+                }
+                case 2: {
+                    TextCell textCell = (TextCell) holder.itemView;
+                    if (position == languageRow) {
+                        textCell.setTextAndIcon(LocaleController.getString("Language", R.string.Language), R.drawable.menu_language, true);
+                    } else if (position == notificationRow) {
+                        textCell.setTextAndIcon(LocaleController.getString("NotificationsAndSounds", R.string.NotificationsAndSounds), R.drawable.menu_notifications, true);
+                    } else if (position == privacyRow) {
+                        textCell.setTextAndIcon(LocaleController.getString("PrivacySettings", R.string.PrivacySettings), R.drawable.menu_secret, true);
+                    } else if (position == dataRow) {
+                        textCell.setTextAndIcon(LocaleController.getString("DataSettings", R.string.DataSettings), R.drawable.menu_data, true);
+                    } else if (position == chatRow) {
+                        textCell.setTextAndIcon(LocaleController.getString("ChatSettings", R.string.ChatSettings), R.drawable.menu_chats, true);
+                    } else if (position == helpRow) {
+                        textCell.setTextAndIcon(LocaleController.getString("SettingsHelp", R.string.SettingsHelp), R.drawable.menu_help, false);
+                    }
+                    break;
+                }
+                case 4: {
+                    if (position == settingsSectionRow2) {
+                        ((HeaderCell) holder.itemView).setText(LocaleController.getString("SETTINGS", R.string.SETTINGS));
+                    } else if (position == numberSectionRow) {
+                        ((HeaderCell) holder.itemView).setText(LocaleController.getString("Account", R.string.Account));
+                    }
+                    break;
+                }
+                case 6: {
+                    TextDetailCell textCell = (TextDetailCell) holder.itemView;
+
+                    if (position == numberRow) {
+                        TLRPC.User user = UserConfig.getInstance(currentAccount).getCurrentUser();
+                        String value;
+                        if (user != null && user.phone != null && user.phone.length() != 0) {
+                            value = PhoneFormat.getInstance().format("+" + user.phone);
+                        } else {
+                            value = LocaleController.getString("NumberUnknown", R.string.NumberUnknown);
+                        }
+                        textCell.setTextAndValue(value, LocaleController.getString("TapToChangePhone", R.string.TapToChangePhone), true);
+                    } else if (position == usernameRow) {
+                        TLRPC.User user = UserConfig.getInstance(currentAccount).getCurrentUser();
+                        String value;
+                        if (user != null && !TextUtils.isEmpty(user.username)) {
+                            value = "@" + user.username;
+                        } else {
+                            value = LocaleController.getString("UsernameEmpty", R.string.UsernameEmpty);
+                        }
+                        textCell.setTextAndValue(value, LocaleController.getString("Username", R.string.Username), true);
+                    } else if (position == bioRow) {
+                        String value;
+                        if (userInfo == null || !TextUtils.isEmpty(userInfo.about)) {
+                            value = userInfo == null ? LocaleController.getString("Loading", R.string.Loading) : userInfo.about;
+                            textCell.setTextWithEmojiAndValue(value, LocaleController.getString("UserBio", R.string.UserBio), false);
+                        } else {
+                            textCell.setTextAndValue(LocaleController.getString("UserBio", R.string.UserBio), LocaleController.getString("UserBioDetail", R.string.UserBioDetail), false);
+                        }
+                    }
+                    break;
+                }
+            }
         }
 
         @Override
-        public long getItemId(int i) {
-            return i;
+        public boolean isEnabled(RecyclerView.ViewHolder holder) {
+            int position = holder.getAdapterPosition();
+            return position == notificationRow || position == numberRow || position == privacyRow ||
+                    position == languageRow || position == usernameRow || position == bioRow ||
+                    position == versionRow || position == dataRow || position == chatRow ||
+                    position == helpRow;
         }
 
         @Override
-        public boolean hasStableIds() {
-            return false;
-        }
-
-        @Override
-        public View getView(int i, View view, ViewGroup viewGroup) {
-            int type = getItemViewType(i);
-            if (type == 0) {
-                if (view == null) {
-                    LayoutInflater li = (LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-                    view = li.inflate(R.layout.settings_name_layout, viewGroup, false);
-
-                    ImageButton button = (ImageButton)view.findViewById(R.id.settings_edit_name);
-                    button.setOnClickListener(new View.OnClickListener() {
-                        @Override
-                        public void onClick(View view) {
-                            presentFragment(new SettingsChangeNameActivity());
-                        }
-                    });
-
-                    final ImageButton button2 = (ImageButton)view.findViewById(R.id.settings_change_avatar_button);
-                    button2.setOnClickListener(new View.OnClickListener() {
-                        @Override
-                        public void onClick(View view) {
-                            if (getParentActivity() == null) {
-                                return;
-                            }
-                            AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
-
-                            CharSequence[] items;
-
-                            TLRPC.User user = MessagesController.getInstance().getUser(UserConfig.getClientUserId());
-                            if (user == null) {
-                                user = UserConfig.getCurrentUser();
-                            }
-                            if (user == null) {
-                                return;
-                            }
-                            boolean fullMenu = false;
-                            if (user.photo != null && user.photo.photo_big != null && !(user.photo instanceof TLRPC.TL_userProfilePhotoEmpty)) {
-                                items = new CharSequence[] {LocaleController.getString("OpenPhoto", R.string.OpenPhoto), LocaleController.getString("FromCamera", R.string.FromCamera), LocaleController.getString("FromGalley", R.string.FromGalley), LocaleController.getString("DeletePhoto", R.string.DeletePhoto)};
-                                fullMenu = true;
-                            } else {
-                                items = new CharSequence[] {LocaleController.getString("FromCamera", R.string.FromCamera), LocaleController.getString("FromGalley", R.string.FromGalley)};
-                            }
-
-                            final boolean full = fullMenu;
-                            builder.setItems(items, new DialogInterface.OnClickListener() {
-                                @Override
-                                public void onClick(DialogInterface dialogInterface, int i) {
-                                    if (i == 0 && full) {
-                                        TLRPC.User user = MessagesController.getInstance().getUser(UserConfig.getClientUserId());
-                                        if (user != null && user.photo != null && user.photo.photo_big != null) {
-                                            PhotoViewer.getInstance().setParentActivity(getParentActivity());
-                                            PhotoViewer.getInstance().openPhoto(user.photo.photo_big, SettingsActivity.this);
-                                        }
-                                    } else if (i == 0 && !full || i == 1 && full) {
-                                        avatarUpdater.openCamera();
-                                    } else if (i == 1 && !full || i == 2 && full) {
-                                        avatarUpdater.openGallery();
-                                    } else if (i == 3) {
-                                        MessagesController.getInstance().deleteUserPhoto(null);
-                                    }
-                                }
-                            });
-                            showAlertDialog(builder);
-                        }
-                    });
-                }
-                TextView textView = (TextView)view.findViewById(R.id.settings_online);
-                textView.setText(LocaleController.getString("Online", R.string.Online));
-
-                textView = (TextView)view.findViewById(R.id.settings_name);
-                Typeface typeface = AndroidUtilities.getTypeface("fonts/rmedium.ttf");
-                textView.setTypeface(typeface);
-                TLRPC.User user = MessagesController.getInstance().getUser(UserConfig.getClientUserId());
-                if (user == null) {
-                    user = UserConfig.getCurrentUser();
-                }
-                if (user != null) {
-                    textView.setText(ContactsController.formatName(user.first_name, user.last_name));
-                    BackupImageView avatarImage = (BackupImageView)view.findViewById(R.id.settings_avatar_image);
-                    avatarImage.processDetach = false;
-                    TLRPC.FileLocation photo = null;
-                    TLRPC.FileLocation photoBig = null;
-                    if (user.photo != null) {
-                        photo = user.photo.photo_small;
-                        photoBig = user.photo.photo_big;
-                    }
-                    avatarImage.setImage(photo, "50_50", AndroidUtilities.getUserAvatarForId(user.id));
-                    avatarImage.imageReceiver.setVisible(!PhotoViewer.getInstance().isShowingImage(photoBig), false);
-                }
-                return view;
-            } else if (type == 1) {
-                if (view == null) {
-                    LayoutInflater li = (LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-                    view = li.inflate(R.layout.settings_section_layout, viewGroup, false);
-                }
-                TextView textView = (TextView)view.findViewById(R.id.settings_section_text);
-                if (i == numberSectionRow) {
-                    textView.setText(LocaleController.getString("YourPhoneNumber", R.string.YourPhoneNumber));
-                } else if (i == settingsSectionRow) {
-                    textView.setText(LocaleController.getString("SETTINGS", R.string.SETTINGS));
-                } else if (i == supportSectionRow) {
-                    textView.setText(LocaleController.getString("Support", R.string.Support));
-                } else if (i == messagesSectionRow) {
-                    textView.setText(LocaleController.getString("MessagesSettings", R.string.MessagesSettings));
-                } else if (i == mediaDownloadSection) {
-                    textView.setText(LocaleController.getString("AutomaticMediaDownload", R.string.AutomaticMediaDownload));
-                } else if (i == contactsSectionRow) {
-                    textView.setText(LocaleController.getString("Contacts", R.string.Contacts).toUpperCase());
-                }
-            } else if (type == 2) {
-                if (view == null) {
-                    LayoutInflater li = (LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-                    view = li.inflate(R.layout.settings_row_button_layout, viewGroup, false);
-                }
-                TextView textView = (TextView)view.findViewById(R.id.settings_row_text);
-                View divider = view.findViewById(R.id.settings_row_divider);
-                if (i == numberRow) {
-                    TLRPC.User user = UserConfig.getCurrentUser();
-                    if (user != null && user.phone != null && user.phone.length() != 0) {
-                        textView.setText(PhoneFormat.getInstance().format("+" + user.phone));
-                    } else {
-                        textView.setText("Unknown");
-                    }
-                    divider.setVisibility(View.INVISIBLE);
-                } else if (i == notificationRow) {
-                    textView.setText(LocaleController.getString("NotificationsAndSounds", R.string.NotificationsAndSounds));
-                    divider.setVisibility(View.VISIBLE);
-                } else if (i == blockedRow) {
-                    textView.setText(LocaleController.getString("BlockedUsers", R.string.BlockedUsers));
-                    divider.setVisibility(backgroundRow != 0 ? View.VISIBLE : View.INVISIBLE);
-                } else if (i == backgroundRow) {
-                    textView.setText(LocaleController.getString("ChatBackground", R.string.ChatBackground));
-                    divider.setVisibility(View.VISIBLE);
-                } else if (i == sendLogsRow) {
-                    textView.setText("Send Logs");
-                    divider.setVisibility(View.VISIBLE);
-                } else if (i == clearLogsRow) {
-                    textView.setText("Clear Logs");
-                    divider.setVisibility(View.VISIBLE);
-                } else if (i == askQuestionRow) {
-                    textView.setText(LocaleController.getString("AskAQuestion", R.string.AskAQuestion));
-                    divider.setVisibility(View.INVISIBLE);
-                } else if (i == terminateSessionsRow) {
-                    textView.setText(LocaleController.getString("TerminateAllSessions", R.string.TerminateAllSessions));
-                    divider.setVisibility(View.INVISIBLE);
-                } else if (i == switchBackendButtonRow) {
-                    textView.setText("Switch Backend");
-                    divider.setVisibility(View.VISIBLE);
-                } else if (i == telegramFaqRow) {
-                    textView.setText(LocaleController.getString("TelegramFAQ", R.string.TelegramFaq));
-                    divider.setVisibility(View.VISIBLE);
-                } else if (i == contactsReimportRow) {
-                    textView.setText(LocaleController.getString("ImportContacts", R.string.ImportContacts));
-                    divider.setVisibility(View.INVISIBLE);
-                }
-            } else if (type == 3) {
-                if (view == null) {
-                    LayoutInflater li = (LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-                    view = li.inflate(R.layout.settings_row_check_layout, viewGroup, false);
-                }
-                TextView textView = (TextView)view.findViewById(R.id.settings_row_text);
-                View divider = view.findViewById(R.id.settings_row_divider);
-                ImageView checkButton = (ImageView)view.findViewById(R.id.settings_row_check_button);
-                SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
-                if (i == enableAnimationsRow) {
-                    textView.setText(LocaleController.getString("EnableAnimations", R.string.EnableAnimations));
-                    divider.setVisibility(View.VISIBLE);
-                    boolean enabled = preferences.getBoolean("view_animations", true);
-                    if (enabled) {
-                        checkButton.setImageResource(R.drawable.btn_check_on);
-                    } else {
-                        checkButton.setImageResource(R.drawable.btn_check_off);
-                    }
-                } else if (i == sendByEnterRow) {
-                    textView.setText(LocaleController.getString("SendByEnter", R.string.SendByEnter));
-                    divider.setVisibility(View.INVISIBLE);
-                    boolean enabled = preferences.getBoolean("send_by_enter", false);
-                    if (enabled) {
-                        checkButton.setImageResource(R.drawable.btn_check_on);
-                    } else {
-                        checkButton.setImageResource(R.drawable.btn_check_off);
-                    }
-                } else if (i == saveToGalleryRow) {
-                    textView.setText(LocaleController.getString("SaveToGallerySettings", R.string.SaveToGallerySettings));
-                    divider.setVisibility(View.INVISIBLE);
-                    if (MediaController.getInstance().canSaveToGallery()) {
-                        checkButton.setImageResource(R.drawable.btn_check_on);
-                    } else {
-                        checkButton.setImageResource(R.drawable.btn_check_off);
-                    }
-                }
-            } else if (type == 4) {
-                if (view == null) {
-                    LayoutInflater li = (LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-                    view = li.inflate(R.layout.settings_logout_button, viewGroup, false);
-                    TextView textView = (TextView)view.findViewById(R.id.settings_row_text);
-                    textView.setText(LocaleController.getString("LogOut", R.string.LogOut));
-                    textView.setOnClickListener(new View.OnClickListener() {
-                        @Override
-                        public void onClick(View view) {
-                            if (getParentActivity() == null) {
-                                return;
-                            }
-                            AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
-                            builder.setMessage(LocaleController.getString("AreYouSureLogout", R.string.AreYouSureLogout));
-                            builder.setTitle(LocaleController.getString("AppName", R.string.AppName));
-                            builder.setPositiveButton(LocaleController.getString("OK", R.string.OK), new DialogInterface.OnClickListener() {
-                                @Override
-                                public void onClick(DialogInterface dialogInterface, int i) {
-                                    SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("Notifications", Activity.MODE_PRIVATE);
-                                    SharedPreferences.Editor editor = preferences.edit();
-                                    editor.clear().commit();
-                                    NotificationCenter.getInstance().postNotificationName(NotificationCenter.appDidLogout);
-                                    MessagesController.getInstance().unregistedPush();
-                                    MessagesController.getInstance().logOut();
-                                    UserConfig.clearConfig();
-                                    MessagesStorage.getInstance().cleanUp(false);
-                                    MessagesController.getInstance().cleanUp();
-                                    ContactsController.getInstance().deleteAllAppAccounts();
-                                }
-                            });
-                            builder.setNegativeButton(LocaleController.getString("Cancel", R.string.Cancel), null);
-                            showAlertDialog(builder);
-                        }
-                    });
-                }
-            } else if (type == 5) {
-                if (view == null) {
-                    LayoutInflater li = (LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-                    view = li.inflate(R.layout.user_profile_leftright_row_layout, viewGroup, false);
-                }
-                TextView textView = (TextView)view.findViewById(R.id.settings_row_text);
-                TextView detailTextView = (TextView)view.findViewById(R.id.settings_row_text_detail);
-                View divider = view.findViewById(R.id.settings_row_divider);
-                if (i == textSizeRow) {
-                    SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
-                    int size = preferences.getInt("fons_size", AndroidUtilities.isTablet() ? 18 : 16);
-                    detailTextView.setText(String.format("%d", size));
-                    textView.setText(LocaleController.getString("TextSize", R.string.TextSize));
-                    divider.setVisibility(View.VISIBLE);
-                } else if (i == languageRow) {
-                    detailTextView.setText(LocaleController.getCurrentLanguageName());
-                    textView.setText(LocaleController.getString("Language", R.string.Language));
-                    divider.setVisibility(View.VISIBLE);
-                } else if (i == contactsSortRow) {
-                    textView.setText(LocaleController.getString("SortBy", R.string.SortBy));
-                    divider.setVisibility(View.VISIBLE);
-                    SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
-                    int sort = preferences.getInt("sortContactsBy", 0);
-                    if (sort == 0) {
-                        detailTextView.setText(LocaleController.getString("Default", R.string.Default));
-                    } else if (sort == 1) {
-                        detailTextView.setText(LocaleController.getString("FirstName", R.string.SortFirstName));
-                    } else if (sort == 2) {
-                        detailTextView.setText(LocaleController.getString("LastName", R.string.SortLastName));
-                    }
-                }
-            } else if (type == 6) {
-                if (view == null) {
-                    LayoutInflater li = (LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-                    view = li.inflate(R.layout.settings_row_version, viewGroup, false);
-                    TextView textView = (TextView)view.findViewById(R.id.settings_row_text);
+        public RecyclerView.ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+            View view = null;
+            switch (viewType) {
+                case 0:
+                    view = new EmptyCell(mContext);
+                    view.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+                    break;
+                case 1:
+                    view = new ShadowSectionCell(mContext);
+                    break;
+                case 2:
+                    view = new TextCell(mContext);
+                    view.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+                    break;
+                case 4:
+                    view = new HeaderCell(mContext, 23);
+                    view.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+                    break;
+                case 5:
+                    TextInfoPrivacyCell cell = new TextInfoPrivacyCell(mContext, 10);
+                    cell.getTextView().setGravity(Gravity.CENTER_HORIZONTAL);
+                    cell.getTextView().setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText3));
+                    cell.getTextView().setMovementMethod(null);
+                    cell.setBackgroundDrawable(Theme.getThemedDrawable(mContext, R.drawable.greydivider_bottom, Theme.key_windowBackgroundGrayShadow));
                     try {
                         PackageInfo pInfo = ApplicationLoader.applicationContext.getPackageManager().getPackageInfo(ApplicationLoader.applicationContext.getPackageName(), 0);
-                        textView.setText(String.format(Locale.US, "Telegram for Android v%s (%d)", pInfo.versionName, pInfo.versionCode));
+                        int code = pInfo.versionCode / 10;
+                        String abi = "";
+                        switch (pInfo.versionCode % 10) {
+                            case 1:
+                            case 3:
+                                abi = "arm-v7a";
+                                break;
+                            case 2:
+                            case 4:
+                                abi = "x86";
+                                break;
+                            case 5:
+                            case 7:
+                                abi = "arm64-v8a";
+                                break;
+                            case 6:
+                            case 8:
+                                abi = "x86_64";
+                                break;
+                            case 0:
+                            case 9:
+                                abi = "universal " + Build.CPU_ABI + " " + Build.CPU_ABI2;
+                                break;
+                        }
+                        cell.setText(LocaleController.formatString("TelegramVersion", R.string.TelegramVersion, String.format(Locale.US, "v%s (%d) %s", pInfo.versionName, code, abi)));
                     } catch (Exception e) {
-                        FileLog.e("tmessages", e);
+                        FileLog.e(e);
                     }
-                }
-            } else if (type == 7) {
-                if (view == null) {
-                    LayoutInflater li = (LayoutInflater)mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-                    view = li.inflate(R.layout.settings_row_detail_layout, viewGroup, false);
-                }
-                TextView textView = (TextView)view.findViewById(R.id.settings_row_text);
-                TextView textViewDetail = (TextView)view.findViewById(R.id.settings_row_text_detail);
-                View divider = view.findViewById(R.id.settings_row_divider);
-
-                SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
-                int mask = 0;
-                if (i == mobileDownloadRow) {
-                    textView.setText(LocaleController.getString("WhenUsingMobileData", R.string.WhenUsingMobileData));
-                    divider.setVisibility(View.VISIBLE);
-                    mask = MediaController.getInstance().mobileDataDownloadMask;
-                } else if (i == wifiDownloadRow) {
-                    textView.setText(LocaleController.getString("WhenConnectedOnWiFi", R.string.WhenConnectedOnWiFi));
-                    divider.setVisibility(View.VISIBLE);
-                    mask = MediaController.getInstance().wifiDownloadMask;
-                } else if (i == roamingDownloadRow) {
-                    textView.setText(LocaleController.getString("WhenRoaming", R.string.WhenRoaming));
-                    divider.setVisibility(View.VISIBLE);
-                    mask = MediaController.getInstance().roamingDownloadMask;
-                }
-                String text = "";
-                if ((mask & MediaController.AUTODOWNLOAD_MASK_PHOTO) != 0) {
-                    text += LocaleController.getString("AttachPhoto", R.string.AttachPhoto);
-                }
-                if ((mask & MediaController.AUTODOWNLOAD_MASK_AUDIO) != 0) {
-                    if (text.length() != 0) {
-                        text += ", ";
-                    }
-                    text += LocaleController.getString("AttachAudio", R.string.AttachAudio);
-                }
-                if ((mask & MediaController.AUTODOWNLOAD_MASK_VIDEO) != 0) {
-                    if (text.length() != 0) {
-                        text += ", ";
-                    }
-                    text += LocaleController.getString("AttachVideo", R.string.AttachVideo);
-                }
-                if ((mask & MediaController.AUTODOWNLOAD_MASK_DOCUMENT) != 0) {
-                    if (text.length() != 0) {
-                        text += ", ";
-                    }
-                    text += LocaleController.getString("AttachDocument", R.string.AttachDocument);
-                }
-                if (text.length() == 0) {
-                    text = LocaleController.getString("NoMediaAutoDownload", R.string.NoMediaAutoDownload);
-                }
-                textViewDetail.setText(text);
+                    cell.getTextView().setPadding(0, AndroidUtilities.dp(14), 0, AndroidUtilities.dp(14));
+                    view = cell;
+                    break;
+                case 6:
+                    view = new TextDetailCell(mContext);
+                    view.setBackgroundColor(Theme.getColor(Theme.key_windowBackgroundWhite));
+                    break;
             }
-            return view;
+            view.setLayoutParams(new RecyclerView.LayoutParams(RecyclerView.LayoutParams.MATCH_PARENT, RecyclerView.LayoutParams.WRAP_CONTENT));
+            return new RecyclerListView.Holder(view);
         }
 
         @Override
-        public int getItemViewType(int i) {
-            if (i == profileRow) {
+        public int getItemViewType(int position) {
+            if (position == overscrollRow) {
                 return 0;
-            } else if (i == numberSectionRow || i == settingsSectionRow || i == supportSectionRow || i == messagesSectionRow || i == mediaDownloadSection || i == contactsSectionRow) {
+            } else if (position == settingsSectionRow) {
                 return 1;
-            } else if (i == textSizeRow || i == languageRow || i == contactsSortRow) {
-                return 5;
-            } else if (i == enableAnimationsRow || i == sendByEnterRow || i == saveToGalleryRow) {
-                return 3;
-            } else if (i == numberRow || i == notificationRow || i == blockedRow || i == backgroundRow || i == askQuestionRow || i == sendLogsRow || i == terminateSessionsRow || i == clearLogsRow || i == switchBackendButtonRow || i == telegramFaqRow || i == contactsReimportRow) {
+            } else if (position == notificationRow || position == privacyRow || position == languageRow ||
+                    position == dataRow || position == chatRow || position == helpRow) {
                 return 2;
-            } else if (i == logoutRow) {
-                return 4;
-            } else if (i == versionRow) {
+            } else if (position == versionRow) {
+                return 5;
+            } else if (position == numberRow || position == usernameRow || position == bioRow) {
                 return 6;
-            } else if (i == wifiDownloadRow || i == mobileDownloadRow || i == roamingDownloadRow) {
-                return 7;
+            } else if (position == settingsSectionRow2 || position == numberSectionRow) {
+                return 4;
             } else {
                 return 2;
             }
         }
+    }
 
-        @Override
-        public int getViewTypeCount() {
-            return 8;
-        }
+    @Override
+    public ThemeDescription[] getThemeDescriptions() {
+        return new ThemeDescription[]{
+                new ThemeDescription(listView, ThemeDescription.FLAG_CELLBACKGROUNDCOLOR, new Class[]{EmptyCell.class, HeaderCell.class, TextDetailCell.class, TextCell.class}, null, null, null, Theme.key_windowBackgroundWhite),
+                new ThemeDescription(fragmentView, ThemeDescription.FLAG_BACKGROUND | ThemeDescription.FLAG_CHECKTAG, null, null, null, null, Theme.key_windowBackgroundGray),
+                new ThemeDescription(fragmentView, ThemeDescription.FLAG_BACKGROUND | ThemeDescription.FLAG_CHECKTAG, null, null, null, null, Theme.key_windowBackgroundWhite),
 
-        @Override
-        public boolean isEmpty() {
-            return false;
-        }
+                new ThemeDescription(actionBar, ThemeDescription.FLAG_BACKGROUND, null, null, null, null, Theme.key_avatar_backgroundActionBarBlue),
+                new ThemeDescription(listView, ThemeDescription.FLAG_LISTGLOWCOLOR, null, null, null, null, Theme.key_avatar_backgroundActionBarBlue),
+                new ThemeDescription(extraHeightView, ThemeDescription.FLAG_BACKGROUND, null, null, null, null, Theme.key_avatar_backgroundActionBarBlue),
+                new ThemeDescription(actionBar, ThemeDescription.FLAG_AB_ITEMSCOLOR, null, null, null, null, Theme.key_avatar_actionBarIconBlue),
+                new ThemeDescription(actionBar, ThemeDescription.FLAG_AB_TITLECOLOR, null, null, null, null, Theme.key_actionBarDefaultTitle),
+                new ThemeDescription(actionBar, ThemeDescription.FLAG_AB_SELECTORCOLOR, null, null, null, null, Theme.key_avatar_actionBarSelectorBlue),
+                new ThemeDescription(nameTextView, ThemeDescription.FLAG_TEXTCOLOR, null, null, null, null, Theme.key_profile_title),
+                new ThemeDescription(onlineTextView, ThemeDescription.FLAG_TEXTCOLOR, null, null, null, null, Theme.key_profile_status),
+                new ThemeDescription(actionBar, ThemeDescription.FLAG_AB_SUBMENUBACKGROUND, null, null, null, null, Theme.key_actionBarDefaultSubmenuBackground),
+                new ThemeDescription(actionBar, ThemeDescription.FLAG_AB_SUBMENUITEM, null, null, null, null, Theme.key_actionBarDefaultSubmenuItem),
+                new ThemeDescription(actionBar, ThemeDescription.FLAG_AB_SUBMENUITEM | ThemeDescription.FLAG_IMAGECOLOR, null, null, null, null, Theme.key_actionBarDefaultSubmenuItemIcon),
+
+                new ThemeDescription(listView, ThemeDescription.FLAG_SELECTOR, null, null, null, null, Theme.key_listSelector),
+
+                new ThemeDescription(listView, 0, new Class[]{View.class}, Theme.dividerPaint, null, null, Theme.key_divider),
+
+                new ThemeDescription(listView, ThemeDescription.FLAG_BACKGROUNDFILTER, new Class[]{ShadowSectionCell.class}, null, null, null, Theme.key_windowBackgroundGrayShadow),
+
+                new ThemeDescription(listView, 0, new Class[]{TextCell.class}, new String[]{"textView"}, null, null, null, Theme.key_windowBackgroundWhiteBlackText),
+                new ThemeDescription(listView, 0, new Class[]{TextCell.class}, new String[]{"valueTextView"}, null, null, null, Theme.key_windowBackgroundWhiteValueText),
+                new ThemeDescription(listView, 0, new Class[]{TextCell.class}, new String[]{"imageView"}, null, null, null, Theme.key_windowBackgroundWhiteGrayIcon),
+
+                new ThemeDescription(listView, 0, new Class[]{HeaderCell.class}, new String[]{"textView"}, null, null, null, Theme.key_windowBackgroundWhiteBlueHeader),
+
+                new ThemeDescription(listView, 0, new Class[]{TextDetailCell.class}, new String[]{"textView"}, null, null, null, Theme.key_windowBackgroundWhiteBlackText),
+                new ThemeDescription(listView, 0, new Class[]{TextDetailCell.class}, new String[]{"valueTextView"}, null, null, null, Theme.key_windowBackgroundWhiteGrayText2),
+
+                new ThemeDescription(listView, ThemeDescription.FLAG_BACKGROUNDFILTER, new Class[]{TextInfoPrivacyCell.class}, null, null, null, Theme.key_windowBackgroundGrayShadow),
+                new ThemeDescription(listView, 0, new Class[]{TextInfoPrivacyCell.class}, new String[]{"textView"}, null, null, null, Theme.key_windowBackgroundWhiteGrayText3),
+
+                new ThemeDescription(avatarImage, 0, null, null, new Drawable[]{Theme.avatar_savedDrawable}, null, Theme.key_avatar_text),
+                new ThemeDescription(avatarImage, 0, null, null, new Drawable[]{avatarDrawable}, null, Theme.key_avatar_backgroundInProfileBlue),
+
+                new ThemeDescription(writeButton, ThemeDescription.FLAG_IMAGECOLOR, null, null, null, null, Theme.key_profile_actionIcon),
+                new ThemeDescription(writeButton, ThemeDescription.FLAG_BACKGROUNDFILTER, null, null, null, null, Theme.key_profile_actionBackground),
+                new ThemeDescription(writeButton, ThemeDescription.FLAG_BACKGROUNDFILTER | ThemeDescription.FLAG_DRAWABLESELECTEDSTATE, null, null, null, null, Theme.key_profile_actionPressedBackground),
+
+                new ThemeDescription(listView, 0, new Class[]{GraySectionCell.class}, new String[]{"textView"}, null, null, null, Theme.key_graySectionText),
+                new ThemeDescription(listView, ThemeDescription.FLAG_CELLBACKGROUNDCOLOR, new Class[]{GraySectionCell.class}, null, null, null, Theme.key_graySection),
+
+                new ThemeDescription(listView, 0, new Class[]{SettingsSearchCell.class}, new String[]{"textView"}, null, null, null, Theme.key_windowBackgroundWhiteBlackText),
+                new ThemeDescription(listView, 0, new Class[]{SettingsSearchCell.class}, new String[]{"valueTextView"}, null, null, null, Theme.key_windowBackgroundWhiteGrayText2),
+                new ThemeDescription(listView, 0, new Class[]{SettingsSearchCell.class}, new String[]{"imageView"}, null, null, null, Theme.key_windowBackgroundWhiteGrayIcon),
+        };
     }
 }
